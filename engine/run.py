@@ -22,6 +22,31 @@ DEFAULTS = dict(
     h0=0.10, h1=0.50,   # exposure ramp: 0% affected at h0, 100% at h1 (metres)
 )
 
+# Ward-Level Soil Classification & Infiltration Calibration
+WARD_SOIL_CONFIG = [
+    # Green / Highland Park Wards (W-01 to W-04): 15-25 mm/hr (permeable)
+    {"id": 0, "name": "Sandy Loam", "infil_rate_mm_hr": 22.0, "max_storage_m": 0.12},
+    {"id": 1, "name": "Loamy Sand", "infil_rate_mm_hr": 25.0, "max_storage_m": 0.14},
+    {"id": 2, "name": "Sandy Loam", "infil_rate_mm_hr": 20.0, "max_storage_m": 0.11},
+    {"id": 3, "name": "Silt Loam", "infil_rate_mm_hr": 18.0, "max_storage_m": 0.10},
+    # Intermediate / Suburban Wards
+    {"id": 4, "name": "Loam", "infil_rate_mm_hr": 12.0, "max_storage_m": 0.08},
+    # Dense Residential Wards (W-06, W-14): 5-10 mm/hr (semi-permeable)
+    {"id": 5, "name": "Silty Clay Loam", "infil_rate_mm_hr": 8.0, "max_storage_m": 0.06},
+    {"id": 6, "name": "Loam", "infil_rate_mm_hr": 10.0, "max_storage_m": 0.07},
+    {"id": 7, "name": "Sandy Clay Loam", "infil_rate_mm_hr": 9.0, "max_storage_m": 0.06},
+    {"id": 8, "name": "Compacted Fill", "infil_rate_mm_hr": 4.0, "max_storage_m": 0.04},
+    # Impervious Urban Flood Centers (W-10, W-11, W-16): 0.5-2.0 mm/hr (mostly concrete/asphalt)
+    {"id": 9, "name": "Impervious Concrete", "infil_rate_mm_hr": 1.2, "max_storage_m": 0.02},
+    {"id": 10, "name": "Asphalt & Concrete", "infil_rate_mm_hr": 0.8, "max_storage_m": 0.015},
+    {"id": 11, "name": "Urban Clay Fill", "infil_rate_mm_hr": 3.5, "max_storage_m": 0.035},
+    {"id": 12, "name": "Silt Loam", "infil_rate_mm_hr": 11.0, "max_storage_m": 0.075},
+    {"id": 13, "name": "Silty Clay", "infil_rate_mm_hr": 6.0, "max_storage_m": 0.05},
+    {"id": 14, "name": "Compacted Clay", "infil_rate_mm_hr": 3.0, "max_storage_m": 0.03},
+    {"id": 15, "name": "Impervious Pavement", "infil_rate_mm_hr": 1.0, "max_storage_m": 0.015},
+]
+
+
 
 def rain_series(cfg, n_steps, dt):
     """Rain intensity (mm/hr) at every internal time step."""
@@ -89,24 +114,65 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
     n_steps = int(sim_hours * 3600 / dt)
 
     # ---- inputs (DATA ENTERS HERE) -------------------------------------------------
-    t_h = np.arange(n_steps) * dt / 3600.0
-    rain_mmhr = np.where(t_h < duration, intensity, 0.0)      # linear intensity, cuts off at duration
+    if "rain" in scenario and intensity_mm_hr is None and duration_hrs is None:
+        rain_mmhr = rain_series(scenario["rain"], n_steps, dt)
+    else:
+        t_h = np.arange(n_steps) * dt / 3600.0
+        rain_mmhr = np.where(t_h < duration, intensity, 0.0)      # linear intensity, cuts off at duration
 
     D = np.asarray(city["D"], float) * MM_HR                    # drainage map -> m/s (own copy)
-    f = p["f_mmhr"] * MM_HR
     gain = np.ones((4, N, M))
     gain[:, np.asarray(city["channel_mask"], bool)] = p["channel_gain"]
     pending = sorted(scenario.get("events", []), key=lambda e: e["t_start_min"])
 
+    # Physical parameters for CFL condition and volumetric mass conservation
+    dx = float(p.get("dx", 10.0))
+    dy = float(p.get("dy", 10.0))
+    g = float(p.get("g", 9.81))
+    cell_area = dx * dy
+
     # ---- time loop -------------------------------------------------------------------
     # Initial Water Level: initialized with initial_water_m value across the grid
     h = np.full((N, M), init_water, dtype=np.float64)
+    h = np.clip(h, 0.0, None)
     frames = [h.astype(np.float32)]
     rain_in = drained_out = infil_out = 0.0
 
     region_map_raw = city.get("region_map")
     reg_map = np.asarray(region_map_raw, int) if region_map_raw is not None else None
     num_reg = int(city.get("n_regions", int(reg_map.max()) + 1)) if reg_map is not None else 16
+
+    # 2D active physical soil infiltration map: calibrated per ward if region_map is present
+    if reg_map is not None and "f_mmhr" not in (params or {}):
+        f_grid = np.zeros((N, M), dtype=np.float64)
+        for r_cfg in WARD_SOIL_CONFIG:
+            r_id = r_cfg["id"]
+            if r_id < num_reg:
+                f_grid[reg_map == r_id] = r_cfg["infil_rate_mm_hr"] * MM_HR
+    else:
+        f_grid = np.full((N, M), p["f_mmhr"] * MM_HR, dtype=np.float64)
+
+    # Soil storage capacity grid S_max (in metres) and active 2D absorption tracking
+    S_max_grid = np.full((N, M), 0.05, dtype=np.float64)
+    if reg_map is not None:
+        for r_cfg in WARD_SOIL_CONFIG:
+            r_id = r_cfg["id"]
+            if r_id < num_reg:
+                S_max_grid[reg_map == r_id] = r_cfg.get("max_storage_m", 0.05)
+
+    absorbed_depth = np.zeros((N, M), dtype=np.float64)
+
+    # Frame-by-frame time-series tracking for ward soil absorption
+    if reg_map is not None:
+        ward_smax_m3 = np.bincount(reg_map.ravel(), weights=S_max_grid.ravel(), minlength=num_reg) * cell_area
+        reg_absorbed_m3_history = [np.zeros(num_reg, dtype=np.float64)]
+        reg_sat_pct_history = [np.zeros(num_reg, dtype=np.float64)]
+    else:
+        ward_smax_m3 = None
+        reg_absorbed_m3_history = []
+        reg_sat_pct_history = []
+
+    ward_cumulative_absorbed = np.zeros(num_reg, dtype=np.float64) if reg_map is not None else None
     flux_matrix = np.zeros((num_reg, num_reg), dtype=np.float64) if reg_map is not None else None
     frame_flux = np.zeros((num_reg, num_reg), dtype=np.float64) if reg_map is not None else None
     flux_timeline = [np.zeros((num_reg, num_reg), dtype=np.float64)] if reg_map is not None else []
@@ -124,27 +190,61 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
             else:
                 raise ValueError(f"unknown event type: {ev['type']}")
         r = rain_mmhr[s] * MM_HR
-        h, dr, inf, out_dir = step(h, z, r, D, f, k, dt, gain, return_out=True)
+
+        # CFL Condition Check: Calculate maximum wave celerity c = sqrt(g * max(h, 0.01))
+        # Ensure dt satisfies dt <= dx / c. If dt exceeds this limit during extreme rain bursts,
+        # subdivide the step internally into sub-cycles (sub-stepping) so simulation never diverges.
+        h_max = float(np.max(h)) if h.size > 0 else 0.0
+        c_celerity = float(np.sqrt(g * max(h_max, 0.01)))
+        dt_cfl = dx / c_celerity if c_celerity > 0 else dt
+
+        if dt > dt_cfl and dt_cfl > 0:
+            n_sub = int(np.ceil(dt / dt_cfl))
+            n_sub = max(1, min(n_sub, 20))
+        else:
+            n_sub = 1
+        dt_sub = dt / n_sub
+
+        out_dir_accum = np.zeros((4, N, M), dtype=np.float64) if reg_map is not None else None
+
+        for _ in range(n_sub):
+            capacity_left = np.maximum(0.0, S_max_grid - absorbed_depth)
+            if reg_map is not None:
+                h, dr, inf, out_dir = step(h, z, r, D, f_grid, k, dt_sub, gain, return_out=True, capacity_left=capacity_left)
+                out_dir_accum += out_dir
+                absorbed_depth += inf
+                # Cumulative Tracking: Track the total volume of water absorbed per ward across time:
+                # cumulative_m3 = sum(actual_loss * dx * dy)
+                ward_step_absorbed = np.bincount(reg_map.ravel(), weights=inf.ravel(), minlength=num_reg) * cell_area
+                ward_cumulative_absorbed += ward_step_absorbed
+            else:
+                h, dr, inf = step(h, z, r, D, f_grid, k, dt_sub, gain, return_out=False, capacity_left=capacity_left)
+                absorbed_depth += inf
+
+            # Zero-Floor Depth Clipping: enforce h >= 0.0 at end of every simulation step
+            h = np.clip(h, 0.0, None)
+            drained_out += float(dr.sum())
+            infil_out += float(inf.sum())
+
+
         rain_in += r * dt * z.size
-        drained_out += dr.sum()
-        infil_out += inf.sum()
 
         # Vectorized Water Attribution: calculate cross-ward boundary fluxes rapidly (Hydraulic Head driven)
-        if reg_map is not None:
+        if reg_map is not None and out_dir_accum is not None:
             # 1. North: [1:, :] -> [:-1, :]
-            s_n, t_n, f_n = reg_map[1:, :], reg_map[:-1, :], out_dir[0][1:, :]
+            s_n, t_n, f_n = reg_map[1:, :], reg_map[:-1, :], out_dir_accum[0][1:, :]
             m_n = (s_n != t_n) & (f_n > 0)
 
             # 2. South: [:-1, :] -> [1:, :]
-            s_s, t_s, f_s = reg_map[:-1, :], reg_map[1:, :], out_dir[1][:-1, :]
+            s_s, t_s, f_s = reg_map[:-1, :], reg_map[1:, :], out_dir_accum[1][:-1, :]
             m_s = (s_s != t_s) & (f_s > 0)
 
             # 3. West: [:, 1:] -> [:, :-1]
-            s_w, t_w, f_w = reg_map[:, 1:], reg_map[:, :-1], out_dir[2][:, 1:]
+            s_w, t_w, f_w = reg_map[:, 1:], reg_map[:, :-1], out_dir_accum[2][:, 1:]
             m_w = (s_w != t_w) & (f_w > 0)
 
             # 4. East: [:, :-1] -> [:, 1:]
-            s_e, t_e, f_e = reg_map[:, :-1], reg_map[:, 1:], out_dir[3][:, :-1]
+            s_e, t_e, f_e = reg_map[:, :-1], reg_map[:, 1:], out_dir_accum[3][:, :-1]
             m_e = (s_e != t_e) & (f_e > 0)
 
             s_all = np.concatenate([s_n[m_n], s_s[m_s], s_w[m_w], s_e[m_e]])
@@ -162,6 +262,11 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
             if reg_map is not None:
                 flux_timeline.append(frame_flux.copy())
                 frame_flux.fill(0.0)
+                # Dynamic time-series logging per frame
+                current_ward_absorbed = np.bincount(reg_map.ravel(), weights=absorbed_depth.ravel(), minlength=num_reg) * cell_area
+                current_ward_sat = np.clip(np.round((current_ward_absorbed / np.maximum(ward_smax_m3, 1e-6)) * 100.0, 1), 0.0, 100.0)
+                reg_absorbed_m3_history.append(current_ward_absorbed)
+                reg_sat_pct_history.append(current_ward_sat)
 
     # ---- results (DERIVED FROM THE FLOOD MOVIE) -------------------------------------------
     hcube = np.array(frames)                                    # [T, N, M] depth in metres
@@ -170,9 +275,20 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
     zones, n_zones = critical_zones(t_crit)
     expo = np.clip((hcube - p["h0"]) / (p["h1"] - p["h0"]), 0, 1)
     affected = (expo * np.asarray(city["pop"], float)).sum(axis=(1, 2))   # [T] people
+
+    # Mass Balance Tracking: Maintain running tally of total system water volume: V_total = sum(h * dx * dy)
+    v_total_m3 = float(np.sum(h) * cell_area)
+    v_rain_m3 = float(rain_in * cell_area)
+    v_drained_m3 = float(drained_out * cell_area)
+    v_infil_m3 = float(infil_out * cell_area)
+    v_init_m3 = float(init_water * z.size * cell_area)
+
     mass_err = (init_water * z.size) + rain_in - drained_out - infil_out - float(h.sum())
+    total_inflow = max((init_water * z.size) + rain_in, 1e-12)
+    mass_err_rel = float(mass_err / total_inflow)
     ever_crit = (hcube >= h_crit).any(axis=0)
     total_pop = float(np.sum(city["pop"]))
+
 
     # ---- region-level aggregation (WARD-BASED TRACKING) -----------------------
     region_status = None
@@ -240,6 +356,33 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
             z=z, flux_matrix=flux_matrix, n_regions=n_regions, h_crit=h_crit
         )
 
+        # Convert frame-by-frame absorption histories to arrays of shape [T, n_regions]
+        reg_absorbed_m3_arr = np.array(reg_absorbed_m3_history) if len(reg_absorbed_m3_history) == T else np.zeros((T, n_regions), dtype=np.float64)
+        reg_sat_pct_arr = np.array(reg_sat_pct_history) if len(reg_sat_pct_history) == T else np.zeros((T, n_regions), dtype=np.float64)
+
+        # Calculate ward saturation percentage and attach soil properties
+        ward_saturation_ratio = np.zeros(n_regions, dtype=np.float64)
+        for r in range(n_regions):
+            cfg = WARD_SOIL_CONFIG[r] if r < len(WARD_SOIL_CONFIG) else {
+                "name": "Standard Loam",
+                "infil_rate_mm_hr": 10.0,
+                "max_storage_m": 0.05,
+            }
+            mask = (region_map == r)
+            cell_count = int(mask.sum())
+            ward_area = cell_count * cell_area
+            ward_max_storage_m3 = ward_area * cfg.get("max_storage_m", 0.05)
+            absorbed_m3 = float(reg_absorbed_m3_arr[-1, r]) if len(reg_absorbed_m3_arr) > 0 else (float(ward_cumulative_absorbed[r]) if ward_cumulative_absorbed is not None else 0.0)
+            sat_ratio = min(1.0, absorbed_m3 / max(ward_max_storage_m3, 1e-6))
+            ward_saturation_ratio[r] = sat_ratio
+
+            r_str = str(r)
+            if r_str in regional_zones:
+                regional_zones[r_str]["soil_type"] = cfg["name"]
+                regional_zones[r_str]["infiltration_rate_mm_hr"] = cfg["infil_rate_mm_hr"]
+                regional_zones[r_str]["cumulative_absorbed_m3"] = round(absorbed_m3, 2)
+                regional_zones[r_str]["soil_saturation_pct"] = round(sat_ratio * 100.0, 1)
+
         region_data = [
             {
                 "id": r,
@@ -249,17 +392,58 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
                 "max_depth": [round(float(d), 4) for d in reg_max_depth_list[:, r]],
                 "affected": [round(float(a), 1) for a in reg_affected_list[:, r]],
                 "status": [int(s) for s in reg_status_list[:, r]],
+                "cumulative_absorbed_m3": [round(float(v), 2) for v in reg_absorbed_m3_arr[:, r]],
+                "soil_saturation_pct": [round(float(s), 1) for s in reg_sat_pct_arr[:, r]],
                 "cell_count": reg_info_list[r]["cell_count"],
                 "total_pop": reg_info_list[r]["total_pop"],
                 "total_population": reg_info_list[r]["total_population"],
                 "average_elevation": reg_info_list[r]["average_elevation"],
                 "primary_flood_source": regional_zones.get(str(r), {}).get("primary_flood_source", "Self-Contained"),
                 "primary_flood_source_id": regional_zones.get(str(r), {}).get("primary_flood_source_id"),
+                "soil_type": regional_zones.get(str(r), {}).get("soil_type", "Sandy Loam"),
+                "infiltration_rate_mm_hr": regional_zones.get(str(r), {}).get("infiltration_rate_mm_hr", 15.0),
             }
             for r in range(n_regions)
         ]
+
+        # Generate frame-by-frame timeline with per-ward telemetry
+        timeline = []
+        for t in range(T):
+            frame_zones = {}
+            for r in range(n_regions):
+                mean_depth = float(reg_depth_list[t, r])
+                ward_affected = int(round(float(reg_affected_list[t, r])))
+                ward_status = int(reg_status_list[t, r])
+                ward_absorbed_vol_m3 = float(reg_absorbed_m3_arr[t, r])
+                ward_sat_ratio = float(reg_sat_pct_arr[t, r]) / 100.0
+                r_str = str(r)
+                ward_soil = regional_zones.get(r_str, {}).get("soil_type", "Sandy Loam")
+                ward_infil = float(regional_zones.get(r_str, {}).get("infiltration_rate_mm_hr", 15.0))
+
+                ward_data = {
+                    "id": r,
+                    "code": f"W-{r+1:02d}",
+                    "name": f"Ward {r+1:02d}",
+                    "depth": round(float(mean_depth), 3),
+                    "affected": int(ward_affected),
+                    "status": ward_status,
+                    "cumulative_absorbed_m3": round(float(ward_absorbed_vol_m3), 1),
+                    "soil_saturation_pct": min(100.0, round(float(ward_sat_ratio * 100.0), 1)),
+                    "soil_type": ward_soil,
+                    "infiltration_rate_mm_hr": ward_infil,
+                }
+                frame_zones[str(r)] = ward_data
+                frame_zones[r] = ward_data
+
+            timeline.append({
+                "step": t,
+                "time_min": round(float(t * mpf), 1),
+                "zones": frame_zones,
+            })
+
     else:
         regional_zones = {}
+        timeline = []
 
     out = {
         "h": hcube,
@@ -278,7 +462,11 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
             "peak_affected": float(affected.max()),
             "peak_affected_pct": float(100 * affected.max() / total_pop),
             "mass_err": float(mass_err),
-            "mass_err_rel": float(mass_err / max(rain_in, 1e-12)),
+            "mass_err_rel": float(mass_err_rel),
+            "total_water_volume_m3": float(v_total_m3),
+            "total_rain_volume_m3": float(v_rain_m3),
+            "total_drained_volume_m3": float(v_drained_m3),
+            "total_infil_volume_m3": float(v_infil_m3),
             "zones": regional_zones,
         },
     }
@@ -290,6 +478,7 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
         out["region_data"] = region_data
         out["region_info"] = region_info
         out["n_regions"] = n_regions
+        out["timeline"] = timeline
 
         # Topography-Driven Dynamic Conduit Flows (24 edges per frame)
         edge_flows = []

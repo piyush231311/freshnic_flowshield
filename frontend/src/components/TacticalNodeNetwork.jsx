@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 
 import { SingleNodeRainCanvas } from './TacticalRainOverlay';
+import ZoneDetails from './ZoneDetails';
 
 /**
  * Programmatic Zone Classification based on prompt specification:
@@ -47,6 +48,7 @@ function TacticalNodeNetwork({
   edgeFlows = [],
   fluxTimeline = [],
   fluxMatrix = null,
+  timeline = [],
   currentTimeMin = 0,
   selectedWardId = 0,
   onSelectWard,
@@ -101,6 +103,9 @@ function TacticalNodeNetwork({
   // Node coordinates and metrics calculation
   const nodes = useMemo(() => {
     const list = [];
+    const safeStep = Math.max(0, Math.min(currentStep, (regionStatus?.length || 1) - 1));
+    const currentTimelineFrame = timeline?.[safeStep] || null;
+
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const id = r * cols + c;
@@ -109,39 +114,54 @@ function TacticalNodeNetwork({
 
         // Extract status for current time step
         let status = 0;
-        if (regionStatus && regionStatus[currentStep] && regionStatus[currentStep][id] !== undefined) {
-          status = regionStatus[currentStep][id];
+        if (regionStatus && regionStatus[safeStep] && regionStatus[safeStep][id] !== undefined) {
+          status = regionStatus[safeStep][id] ?? 0;
         }
 
         // Extract depth for current time step
         let depth = 0;
         if (regionData && regionData[id] && regionData[id].depth) {
-          depth = regionData[id].depth[currentStep] || 0;
-        } else if (regionDepth && regionDepth[currentStep] && regionDepth[currentStep][id] !== undefined) {
-          depth = regionDepth[currentStep][id];
+          depth = regionData[id].depth[safeStep] ?? 0;
+        } else if (regionDepth && regionDepth[safeStep] && regionDepth[safeStep][id] !== undefined) {
+          depth = regionDepth[safeStep][id] ?? 0;
         }
 
         // Extract affected citizens
         let affected = 0;
         if (regionData && regionData[id] && regionData[id].affected) {
-          affected = regionData[id].affected[currentStep] || 0;
-        } else if (regionAffected && regionAffected[currentStep] && regionAffected[currentStep][id] !== undefined) {
-          affected = regionAffected[currentStep][id];
+          affected = regionData[id].affected[safeStep] ?? 0;
+        } else if (regionAffected && regionAffected[safeStep] && regionAffected[safeStep][id] !== undefined) {
+          affected = regionAffected[safeStep][id] ?? 0;
         }
 
         // Ward info & telemetry from API
         const rData = regionData && regionData[id] ? regionData[id] : null;
         const zData = zones && (zones[id] || zones[String(id)]) ? (zones[id] || zones[String(id)]) : null;
+        const currentWardData = currentTimelineFrame?.zones?.[id] || currentTimelineFrame?.zones?.[String(id)] || {};
         
         const name = rData?.name || zData?.name || `Ward ${String(id + 1).padStart(2, '0')}`;
         const code = `W-${String(id + 1).padStart(2, '0')}`;
-        const totalPop = rData?.total_population || rData?.total_pop || zData?.total_population || zData?.total_pop || 7500;
+        const totalPop = rData?.total_population ?? rData?.total_pop ?? zData?.total_population ?? zData?.total_pop ?? 7500;
         const averageElevation = rData?.average_elevation ?? zData?.average_elevation ?? 6.5;
         const tCrit = zData?.t_crit ?? null;
-        const peakDepth = zData?.peak_depth ?? (rData?.max_depth ? Math.max(...rData.max_depth) : depth);
+        const peakDepth = zData?.peak_depth ?? (rData?.max_depth ? Math.max(...rData.max_depth) : depth) ?? 0;
         const classification = getZoneClassification(totalPop);
-        const primaryFloodSource = rData?.primary_flood_source || zData?.primary_flood_source || 'Self-Contained';
-        const earlyWarning = zData?.early_warning || null;
+        const primaryFloodSource = rData?.primary_flood_source ?? zData?.primary_flood_source ?? 'Self-Contained';
+        const earlyWarning = zData?.early_warning ?? null;
+        const soilType = rData?.soil_type ?? zData?.soil_type ?? 'Sandy Loam';
+        const infiltrationRate = rData?.infiltration_rate_mm_hr ?? zData?.infiltration_rate_mm_hr ?? 15.0;
+
+        const cumulativeAbsorbedM3 = currentWardData.cumulative_absorbed_m3 !== undefined
+          ? Number(currentWardData.cumulative_absorbed_m3) || 0
+          : Array.isArray(rData?.cumulative_absorbed_m3)
+          ? Number(rData.cumulative_absorbed_m3[safeStep]) || 0
+          : Number(rData?.cumulative_absorbed_m3 ?? zData?.cumulative_absorbed_m3 ?? 0);
+
+        const soilSaturationPct = currentWardData.soil_saturation_pct !== undefined
+          ? Number(currentWardData.soil_saturation_pct) || 0
+          : Array.isArray(rData?.soil_saturation_pct)
+          ? Number(rData.soil_saturation_pct[safeStep]) || 0
+          : Number(rData?.soil_saturation_pct ?? zData?.soil_saturation_pct ?? 0);
 
         list.push({
           id,
@@ -161,11 +181,20 @@ function TacticalNodeNetwork({
           classification,
           primaryFloodSource,
           earlyWarning,
+          soilType,
+          soil_type: soilType,
+          infiltrationRate,
+          infiltration_rate_mm_hr: infiltrationRate,
+          cumulativeAbsorbedM3,
+          cumulative_absorbed_m3: cumulativeAbsorbedM3,
+          soilSaturationPct,
+          soil_saturation_pct: soilSaturationPct,
         });
+
       }
     }
     return list;
-  }, [currentStep, regionStatus, regionData, regionDepth, regionAffected, zones, stepX, stepY]);
+  }, [currentStep, regionStatus, regionData, regionDepth, regionAffected, zones, timeline, stepX, stepY]);
 
   // Currently selected node for the Pinned Zone Details Panel
   const selectedNode = useMemo(() => {
@@ -199,7 +228,8 @@ function TacticalNodeNetwork({
   // Safe extraction of edge flows for currentStep
   const edgeMap = useMemo(() => {
     const map = new Map();
-    const frame = edgeFlows?.[currentStep];
+    const safeStep = Math.max(0, Math.min(currentStep, (edgeFlows?.length || 1) - 1));
+    const frame = edgeFlows?.[safeStep];
     if (Array.isArray(frame)) {
       frame.forEach((e) => {
         if (e?.key) map.set(e.key, e);
@@ -207,6 +237,7 @@ function TacticalNodeNetwork({
     }
     return map;
   }, [edgeFlows, currentStep]);
+
 
   // Handle node hover with viewport-relative coordinates for React Portal
   const handleMouseEnter = (node, e) => {
@@ -264,12 +295,14 @@ function TacticalNodeNetwork({
 
         {/* Network Graph Canvas Container (NO overflow-hidden, allows smooth layout) */}
         <div className="relative w-full flex items-center justify-center my-4 overflow-x-auto">
-          <div className="relative w-full max-w-[850px]">
+          <div className="relative w-full max-w-[850px] aspect-[4/3]">
             {/* SVG Conduit Flow Network (Background Layer) */}
             <svg
-              viewBox={`0 0 ${width} ${height}`}
-              className="w-full h-auto drop-shadow-2xl select-none relative z-0"
+              viewBox="0 0 800 600"
+              preserveAspectRatio="xMidYMid meet"
+              className="w-full h-full drop-shadow-2xl select-none relative z-0"
             >
+
               <defs>
                 <linearGradient id="conduitTeal" x1="0%" y1="0%" x2="100%" y2="0%">
                   <stop offset="0%" stopColor="#0d9488" stopOpacity="0.8" />
@@ -466,12 +499,13 @@ function TacticalNodeNetwork({
                       className="font-mono text-[9px] font-bold leading-tight"
                       style={{ color: cfg.color }}
                     >
-                      {node.depth.toFixed(2)}m
+                      {(node.depth ?? 0).toFixed(2)}m
                     </span>
                     <span
                       className="w-1.5 h-1.5 rounded-full mt-0.5"
                       style={{ backgroundColor: cfg.color }}
                     />
+
                   </div>
 
                   {/* Canvas Rain Animation Layer: strictly inner circular mask */}
@@ -505,273 +539,13 @@ function TacticalNodeNetwork({
       </div>
 
       {/* 2. PINNED 'ZONE DETAILS' SIDE/BOTTOM INSPECTOR PANEL */}
-      {selectedNode && (
-        <div className="bg-slate-900/95 rounded-2xl border border-teal-500/40 p-5 shadow-2xl backdrop-blur-md transition-all duration-200">
-          
-          {/* Panel Top Header */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
-            <div className="flex items-center space-x-3">
-              <div className="px-3 py-1.5 rounded-xl bg-teal-950/80 border border-teal-500/60 text-teal-300 font-mono font-extrabold text-base tracking-wider shadow-lg">
-                {selectedNode.code}
-              </div>
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-base font-bold font-mono text-white">
-                    {selectedNode.name} // SECTOR TELEMETRY
-                  </h3>
-                  <span className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-bold border ${selectedNode.classification.badgeClass}`}>
-                    {selectedNode.classification.label}
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/50 text-cyan-300 shadow-sm">
-                    Primary Inflow Source: {selectedNode.primaryFloodSource || 'Self-Contained'}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 font-mono mt-0.5">
-                  {selectedNode.classification.desc}
-                </p>
-              </div>
-            </div>
+      <ZoneDetails
+        selectedNode={selectedNode}
+        currentTimeMin={currentTimeMin}
+        currentTimelineFrame={timeline?.[Math.max(0, Math.min(currentStep, (regionStatus?.length || 1) - 1))] || null}
+        STATUS_CONFIG={STATUS_CONFIG}
+      />
 
-            {/* Status Pill */}
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-mono text-slate-400">STATUS:</span>
-              <span className={`px-3 py-1 rounded-lg text-xs font-mono font-bold border ${STATUS_CONFIG[selectedNode.status].bgPill} ${STATUS_CONFIG[selectedNode.status].textColor} ${STATUS_CONFIG[selectedNode.status].borderPill} flex items-center space-x-1.5 shadow-md`}>
-                <span className={`w-2 h-2 rounded-full animate-ping ${selectedNode.status === 2 ? 'bg-red-500' : selectedNode.status === 1 ? 'bg-amber-400' : 'bg-emerald-400'}`} />
-                <span>{STATUS_CONFIG[selectedNode.status].label}</span>
-              </span>
-            </div>
-          </div>
-
-          {/* Deep Region Data Metrics Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
-            
-            {/* Metric 1: Current Inundation Depth */}
-            <div className="bg-slate-950/90 p-4 rounded-xl border border-slate-800 shadow-lg flex flex-col justify-between">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-mono">
-                <span className="flex items-center gap-1.5">
-                  <Droplets className="w-4 h-4 text-cyan-400" />
-                  CURRENT DEPTH
-                </span>
-                <span className="text-slate-400 text-[10px]">Threshold: 0.50m</span>
-              </div>
-              <div className="text-2xl font-bold font-mono text-white mt-1">
-                {selectedNode.depth.toFixed(2)} <span className="text-sm font-normal text-slate-400">m</span>
-              </div>
-              {/* Depth Bar */}
-              <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden mt-2">
-                <div
-                  className={`h-full rounded-full transition-all duration-300 ${
-                    selectedNode.status === 2 ? 'bg-red-500' : selectedNode.status === 1 ? 'bg-amber-400' : 'bg-emerald-400'
-                  }`}
-                  style={{ width: `${Math.min(100, (selectedNode.depth / 1.2) * 100)}%` }}
-                />
-              </div>
-              <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 mt-1.5">
-                <span>Peak: {selectedNode.peakDepth.toFixed(2)} m</span>
-                <span>{selectedNode.depth >= 0.50 ? 'CRITICAL LEVEL' : selectedNode.depth >= 0.25 ? 'ELEVATED' : 'NOMINAL'}</span>
-              </div>
-            </div>
-
-            {/* Metric 2: Average Elevation (z) */}
-            <div className="bg-slate-950/90 p-4 rounded-xl border border-slate-800 shadow-lg flex flex-col justify-between">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-mono">
-                <span className="flex items-center gap-1.5">
-                  <Mountain className="w-4 h-4 text-amber-400" />
-                  AVERAGE ELEVATION
-                </span>
-                <span className="text-amber-400/80 text-[10px]">Terrain z</span>
-              </div>
-              <div className="text-2xl font-bold font-mono text-amber-300 mt-1">
-                {selectedNode.averageElevation.toFixed(2)} <span className="text-sm font-normal text-slate-400">m</span>
-              </div>
-              <p className="text-[11px] text-slate-400 font-mono mt-2">
-                {selectedNode.averageElevation < 6.0
-                  ? 'Lowland river basin / Natural depression'
-                  : selectedNode.averageElevation < 9.0
-                  ? 'Midland urban plateau'
-                  : 'Highland crest / Ridge'}
-              </p>
-              <div className="text-[10px] font-mono text-slate-400 border-t border-slate-800/80 pt-1 mt-1">
-                Datum: Sea-level benchmark
-              </div>
-            </div>
-
-            {/* Metric 3: Affected Citizens (Count / Total Fraction) */}
-            <div className="bg-slate-950/90 p-4 rounded-xl border border-slate-800 shadow-lg flex flex-col justify-between">
-              <div className="flex items-center justify-between text-slate-400 text-xs font-mono">
-                <span className="flex items-center gap-1.5">
-                  <Users className="w-4 h-4 text-teal-400" />
-                  AFFECTED CITIZENS
-                </span>
-                <span className="text-teal-400 font-bold text-[10px]">
-                  {selectedNode.totalPop > 0
-                    ? `${((selectedNode.affected / selectedNode.totalPop) * 100).toFixed(1)}%`
-                    : '0%'}
-                </span>
-              </div>
-              <div className="text-2xl font-bold font-mono text-teal-300 mt-1">
-                {Math.round(selectedNode.affected).toLocaleString()}
-                <span className="text-xs font-normal text-slate-400"> / {Math.round(selectedNode.totalPop).toLocaleString()}</span>
-              </div>
-              {/* Population Affected Bar */}
-              <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden mt-2">
-                <div
-                  className="h-full bg-teal-400 rounded-full transition-all duration-300"
-                  style={{
-                    width: `${Math.min(
-                      100,
-                      selectedNode.totalPop > 0 ? (selectedNode.affected / selectedNode.totalPop) * 100 : 0
-                    )}%`,
-                  }}
-                />
-              </div>
-              <div className="text-[10px] font-mono text-slate-400 border-t border-slate-800/80 pt-1 mt-1">
-                Classification: {selectedNode.classification.label}
-              </div>
-            </div>
-
-            {/* Live Dynamic Countdown Calculation (Task 1) */}
-            {(() => {
-              const curMin = typeof currentTimeMin === 'number' ? currentTimeMin : 0;
-              const absoluteTCrit = selectedNode?.earlyWarning?.p50 ?? selectedNode?.tCrit ?? null;
-              const timeRemaining = absoluteTCrit !== null && absoluteTCrit !== undefined
-                ? Math.max(0, Math.round(absoluteTCrit - curMin))
-                : null;
-              const p10Remaining = selectedNode?.earlyWarning?.p10 != null
-                ? Math.max(0, Math.round(selectedNode.earlyWarning.p10 - curMin))
-                : null;
-              const p90Remaining = selectedNode?.earlyWarning?.p90 != null
-                ? Math.max(0, Math.round(selectedNode.earlyWarning.p90 - curMin))
-                : null;
-              const isBreachedNow = timeRemaining === 0 || selectedNode?.status === 2;
-
-              return (
-                <div className={`bg-slate-950/90 p-4 rounded-xl border ${isBreachedNow && selectedNode.earlyWarning?.breached ? 'border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'border-slate-800 shadow-lg'} flex flex-col justify-between`}>
-                  <div className="flex items-center justify-between text-slate-400 text-xs font-mono">
-                    <span className="flex items-center gap-1.5">
-                      <Activity className={`w-4 h-4 ${isBreachedNow ? 'text-red-400' : 'text-purple-400'}`} />
-                      ENSEMBLE EARLY WARNING
-                    </span>
-                    <span className="text-[10px] font-mono text-slate-400">
-                      {selectedNode.earlyWarning?.breached ? 'P50 Countdown' : 't_crit'}
-                    </span>
-                  </div>
-                  <div className={`text-2xl font-bold font-mono mt-1 ${isBreachedNow && selectedNode.earlyWarning?.breached ? 'text-red-400 animate-pulse' : 'text-teal-300'}`}>
-                    {selectedNode.earlyWarning?.breached ? (
-                      timeRemaining === 0 ? (
-                        'BREACH ACTIVE'
-                      ) : (
-                        `~${timeRemaining} min`
-                      )
-                    ) : selectedNode.tCrit !== null && selectedNode.tCrit !== undefined ? (
-                      timeRemaining === 0 ? (
-                        'BREACH ACTIVE'
-                      ) : (
-                        `~${timeRemaining} min`
-                      )
-                    ) : (
-                      'NONE (SAFE)'
-                    )}
-                  </div>
-                  <div className="text-[11px] font-mono mt-2 leading-snug">
-                    {selectedNode.earlyWarning?.breached ? (
-                      timeRemaining === 0 ? (
-                        <span className="text-red-400 font-semibold">
-                          Threshold reached (Onset: T+{Math.round(selectedNode.earlyWarning.p50)}m)
-                        </span>
-                      ) : (
-                        <span className="text-amber-300 font-semibold">
-                          CI P10–P90: {p10Remaining}m to {p90Remaining}m remaining
-                        </span>
-                      )
-                    ) : (
-                      <span className="text-slate-400">
-                        {selectedNode.tCrit !== null && selectedNode.tCrit !== undefined
-                          ? timeRemaining === 0
-                            ? `Threshold breached at minute ${Math.round(selectedNode.tCrit)}`
-                            : `~${timeRemaining}m until critical threshold`
-                          : 'Remains below critical depth in confidence window'}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[10px] font-mono text-slate-400 border-t border-slate-800/80 pt-1 mt-1">
-                    {selectedNode.earlyWarning?.breached
-                      ? `Risk: ${Math.round((selectedNode.earlyWarning.breach_probability || 1.0) * 100)}% • Onset: T+${Math.round(selectedNode.earlyWarning.p50)}m`
-                      : 'Standard Monitoring • 0% Breach Risk'}
-                  </div>
-                </div>
-              );
-            })()}
-
-          </div>
-
-          {/* Probabilistic Warning Box (Tier 2 Hackathon Differentiator) with Live Countdown */}
-          {(() => {
-            const curMin = typeof currentTimeMin === 'number' ? currentTimeMin : 0;
-            const absoluteTCrit = selectedNode?.earlyWarning?.p50 ?? selectedNode?.tCrit ?? null;
-            const timeRemaining = absoluteTCrit !== null && absoluteTCrit !== undefined
-              ? Math.max(0, Math.round(absoluteTCrit - curMin))
-              : null;
-            const p10Remaining = selectedNode?.earlyWarning?.p10 != null
-              ? Math.max(0, Math.round(selectedNode.earlyWarning.p10 - curMin))
-              : null;
-            const p90Remaining = selectedNode?.earlyWarning?.p90 != null
-              ? Math.max(0, Math.round(selectedNode.earlyWarning.p90 - curMin))
-              : null;
-            const isBreachedNow = timeRemaining === 0 || selectedNode?.status === 2;
-
-            if (selectedNode.earlyWarning?.breached) {
-              return (
-                <div className={`mt-4 p-4 rounded-xl border ${isBreachedNow ? 'border-red-500/80 bg-red-950/50 shadow-[0_0_30px_rgba(239,68,68,0.35)]' : 'border-amber-500/60 bg-amber-950/30 shadow-[0_0_25px_rgba(245,158,11,0.2)]'} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-mono`}>
-                  <div className="flex items-start sm:items-center space-x-3">
-                    <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 sm:mt-0 ${isBreachedNow ? 'text-red-400 animate-bounce' : 'text-amber-400'}`} />
-                    <div>
-                      <div className={`text-xs sm:text-sm font-bold ${isBreachedNow ? 'text-red-200' : 'text-amber-200'}`}>
-                        {timeRemaining === 0
-                          ? `CRITICAL BREACH ACTIVE: Ward has reached critical inundation depth. (Initial breach at T+${Math.round(selectedNode.earlyWarning.p50)}m)`
-                          : `CRITICAL WARNING: Ward projected to reach critical levels in ~${timeRemaining} mins. (Confidence Interval P10-P90: ${p10Remaining}m to ${p90Remaining}m)`}
-                      </div>
-                      <div className="text-[11px] text-slate-300 mt-0.5 flex flex-wrap items-center gap-2">
-                        <span>Primary Inflow Source: <strong className="text-cyan-300">{selectedNode.primaryFloodSource || 'Self-Contained'}</strong></span>
-                        <span>•</span>
-                        <span>20-Run Monte Carlo Ensemble (±10% Rain & Drainage Perturbations)</span>
-                        <span>•</span>
-                        <span className="text-amber-300/90">Current Storm Time: T+{Math.round(curMin)}m</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="shrink-0 flex items-center space-x-2 text-xs">
-                    <span className="px-2 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-slate-200 font-bold">
-                      {timeRemaining === 0 ? 'P10: Reached' : `P10: ${p10Remaining}m`}
-                    </span>
-                    <span className={`px-2.5 py-0.5 rounded font-extrabold shadow-md ${isBreachedNow ? 'bg-red-500 text-slate-950' : 'bg-amber-400 text-slate-950'}`}>
-                      {timeRemaining === 0 ? 'P50: ACTIVE' : `P50: ~${timeRemaining}m`}
-                    </span>
-                    <span className="px-2 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-slate-200 font-bold">
-                      {timeRemaining === 0 ? 'P90: Reached' : `P90: ${p90Remaining}m`}
-                    </span>
-                  </div>
-                </div>
-              );
-            }
-
-            return (
-              <div className="mt-4 p-3.5 rounded-xl border border-emerald-500/40 bg-emerald-950/30 font-mono text-xs text-emerald-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-                <div className="flex items-center space-x-2.5">
-                  <Shield className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>
-                    SAFE: Ward projected to remain below critical depth throughout simulation window. (Confidence Interval: 0% breach across 20 Monte Carlo runs).
-                  </span>
-                </div>
-                <div className="shrink-0 text-[11px] text-slate-400">
-                  Primary Inflow Source: <span className="text-cyan-300 font-bold">{selectedNode.primaryFloodSource || 'Self-Contained'}</span>
-                </div>
-              </div>
-            );
-          })()}
-
-        </div>
-      )}
 
       {/* 3. REACT PORTAL TOOLTIP (Renders into document.body to completely escape all CSS clipping & stacking contexts) */}
       {portalTooltip && typeof document !== 'undefined' && createPortal(
@@ -816,7 +590,7 @@ function TacticalNodeNetwork({
                       <Droplets className="w-3.5 h-3.5 text-cyan-400" />
                       Current Depth:
                     </span>
-                    <span className="text-white font-bold">{node.depth.toFixed(2)} m</span>
+                    <span className="text-white font-bold">{(node.depth ?? 0).toFixed(2)} m</span>
                   </div>
 
                   {/* Depth Gauge Bar */}
@@ -825,7 +599,7 @@ function TacticalNodeNetwork({
                       className={`h-full rounded-full transition-all duration-300 ${
                         node.status === 2 ? 'bg-red-500' : node.status === 1 ? 'bg-amber-400' : 'bg-emerald-400'
                       }`}
-                      style={{ width: `${Math.min(100, (node.depth / 1.0) * 100)}%` }}
+                      style={{ width: `${Math.min(100, ((node.depth ?? 0) / 1.0) * 100)}%` }}
                     />
                   </div>
 
@@ -836,7 +610,7 @@ function TacticalNodeNetwork({
                       Average Elevation:
                     </span>
                     <span className="text-amber-300 font-bold">
-                      {node.averageElevation.toFixed(2)} m
+                      {(node.averageElevation ?? 0).toFixed(2)} m
                     </span>
                   </div>
 
@@ -847,9 +621,10 @@ function TacticalNodeNetwork({
                       Affected Citizens:
                     </span>
                     <span className="text-teal-300 font-bold">
-                      {Math.round(node.affected).toLocaleString()} / {Math.round(node.totalPop).toLocaleString()}
+                      {Math.round(node.affected ?? 0).toLocaleString()} / {Math.round(node.totalPop ?? 0).toLocaleString()}
                     </span>
                   </div>
+
 
                   {/* Primary Inflow Source */}
                   <div className="flex items-center justify-between pt-1">

@@ -33,8 +33,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from collections import OrderedDict
+
 # In-memory cache for generated city terrain arrays to ensure sub-second response times
 _CITY_CACHE: Dict[int, Dict[str, np.ndarray]] = {}
+
+# In-memory LRU cache for scenario simulation responses
+_SIMULATION_CACHE: OrderedDict = OrderedDict()
+_SIMULATION_CACHE_MAX_SIZE: int = 64
 
 
 class SimulationRequest(BaseModel):
@@ -42,19 +48,19 @@ class SimulationRequest(BaseModel):
         default=75.0,
         ge=0.0,
         le=500.0,
-        description="Rainfall intensity in mm/hr (Range: 0 to 300 mm/hr)",
+        description="Rainfall intensity in mm/hr (Range: 0 to 500 mm/hr)",
     )
     duration_hrs: float = Field(
         default=4.0,
-        gt=0.0,
-        le=48.0,
-        description="Storm duration in hours (Range: 1 to 24 hrs)",
+        ge=1.0,
+        le=72.0,
+        description="Storm duration in hours (Range: 1 to 72 hrs)",
     )
     initial_water_m: float = Field(
         default=0.0,
         ge=0.0,
-        le=10.0,
-        description="Initial standing water depth in metres across the city (Range: 0.0 to 2.5m)",
+        le=5.0,
+        description="Initial standing water depth in metres across the city (Range: 0.0 to 5.0m)",
     )
     drain_failure: bool = Field(
         default=False,
@@ -68,6 +74,7 @@ class SimulationRequest(BaseModel):
         default=80,
         description="Spatial grid resolution [N, N]. Default 80x80 ensures instant transfer and smooth browser rendering.",
     )
+
 
 
 def get_or_create_city(grid_size: int) -> Dict[str, np.ndarray]:
@@ -197,6 +204,19 @@ def simulate(req: SimulationRequest):
         zones: per-ward regional metrics dictionary
         baseline_summary: metrics for 'normal' rain without disruptions for delta calculations
     """
+    # In-Memory Caching: return cached simulation result immediately if parameters match
+    cache_key = (
+        round(float(req.intensity_mm_hr), 2),
+        round(float(req.duration_hrs), 2),
+        round(float(req.initial_water_m), 2),
+        bool(req.blockage),
+        bool(req.drain_failure),
+        int(req.grid_size),
+    )
+    if cache_key in _SIMULATION_CACHE:
+        _SIMULATION_CACHE.move_to_end(cache_key)
+        return _SIMULATION_CACHE[cache_key]
+
     city = get_or_create_city(req.grid_size)
     scenario = build_scenario(
         req.intensity_mm_hr,
@@ -206,6 +226,7 @@ def simulate(req: SimulationRequest):
         req.blockage,
         req.grid_size,
     )
+
 
     # Run primary requested simulation
     result = run_scenario(
@@ -283,6 +304,8 @@ def simulate(req: SimulationRequest):
             response_data["edge_flows"] = result["edge_flows"]
         if "flux_matrix" in result:
             response_data["flux_matrix"] = result["flux_matrix"]
+        if "timeline" in result:
+            response_data["timeline"] = result["timeline"]
 
     # Run probabilistic ensemble early warning (20 Monte Carlo iterations with +/-10% variance)
     try:
@@ -303,7 +326,15 @@ def simulate(req: SimulationRequest):
     except Exception as e:
         print(f"[Ensemble Early Warning] Execution note: {e}")
 
-    return sanitize_for_json(response_data)
+    sanitized_response = sanitize_for_json(response_data)
+
+    # In-memory LRU cache update
+    if len(_SIMULATION_CACHE) >= _SIMULATION_CACHE_MAX_SIZE:
+        _SIMULATION_CACHE.popitem(last=False)
+    _SIMULATION_CACHE[cache_key] = sanitized_response
+
+    return sanitized_response
+
 
 
 @app.post("/api/early-warning")

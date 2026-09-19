@@ -54,15 +54,29 @@ export default function App() {
   // Time & step telemetry
   const timesMin = simData?.times_min || [];
   const totalSteps = timesMin.length > 0 ? timesMin.length : 37;
-  const currentTimeMin = timesMin[currentTimeIndex] !== undefined ? timesMin[currentTimeIndex] : currentTimeIndex * 3.33;
+  // Playback Index Clamping: Always clamp frame access to [0, totalSteps - 1]
+  const clampedTimeIndex = Math.max(0, Math.min(currentTimeIndex, totalSteps - 1));
+  const currentTimeMin = timesMin[clampedTimeIndex] !== undefined ? timesMin[clampedTimeIndex] : clampedTimeIndex * 3.33;
+
+  // Auto-pause if playback index reaches or exceeds the final frame
+  useEffect(() => {
+    if (isPlaying && currentTimeIndex >= totalSteps - 1) {
+      setIsPlaying(false);
+    }
+  }, [isPlaying, currentTimeIndex, totalSteps, setIsPlaying]);
 
   // Playback timer ticker (advances currentTimeIndex locally with zero network calls)
   useEffect(() => {
     if (isPlaying) {
+      if (currentTimeIndex >= totalSteps - 1) {
+        setIsPlaying(false);
+        return;
+      }
       const intervalMs = Math.max(80, 500 / playbackSpeed);
       playTimerRef.current = setInterval(() => {
         const next = currentTimeIndex + 1;
-        if (next >= totalSteps) {
+        if (next >= totalSteps - 1) {
+          setTimeIndex(totalSteps - 1);
           setIsPlaying(false);
         } else {
           setTimeIndex(next);
@@ -110,21 +124,23 @@ export default function App() {
       };
     }
 
-    const currentAffected = simData.affected_pop && simData.affected_pop[currentTimeIndex] !== undefined
-      ? simData.affected_pop[currentTimeIndex]
-      : simData.summary.peak_affected;
+    const frame = Math.max(0, Math.min(currentTimeIndex, (simData?.times_min?.length || 1) - 1));
+
+    const currentAffected = simData.affected_pop && simData.affected_pop[frame] !== undefined
+      ? (simData.affected_pop[frame] ?? 0)
+      : (simData.summary.peak_affected ?? 0);
 
     let critCount = 0;
-    if (simData.region_status && simData.region_status[currentTimeIndex]) {
-      critCount = simData.region_status[currentTimeIndex].filter((s) => s === 2).length;
+    if (simData.region_status && simData.region_status[frame]) {
+      critCount = simData.region_status[frame].filter((s) => s === 2).length;
     }
 
     return {
-      peakDepth: simData.summary.peak_depth_m || 0,
-      totalAffected: currentAffected,
-      peakAffected: simData.summary.peak_affected || 0,
-      firstCrit: simData.summary.first_critical_min,
-      critWards: critCount,
+      peakDepth: simData.summary.peak_depth_m ?? 0,
+      totalAffected: currentAffected ?? 0,
+      peakAffected: simData.summary.peak_affected ?? 0,
+      firstCrit: simData.summary.first_critical_min ?? null,
+      critWards: critCount ?? 0,
     };
   }, [simData, currentTimeIndex]);
 
@@ -141,10 +157,11 @@ export default function App() {
 
       {/* 2. GLOBAL CONTROLS (PLAYBACK BAR & RAINFALL CONFIG) */}
       <TacticalPlaybackBar
-        currentStep={currentTimeIndex}
+        currentStep={clampedTimeIndex}
         totalSteps={totalSteps}
         currentTimeMin={currentTimeMin}
         timesMin={timesMin}
+
         isPlaying={isPlaying}
         setIsPlaying={setIsPlaying}
         playbackSpeed={playbackSpeed}
@@ -299,7 +316,7 @@ export default function App() {
         {activeTab === 'map' && (
           <ErrorBoundary fallbackTitle="Tactical Node Network encountered an error.">
             <TacticalNodeNetwork
-              currentStep={currentTimeIndex}
+              currentStep={clampedTimeIndex}
               regionStatus={simData?.region_status}
               regionData={simData?.region_data}
               regionDepth={simData?.region_depth}
@@ -308,6 +325,7 @@ export default function App() {
               edgeFlows={simData?.edge_flows}
               fluxTimeline={simData?.flux_timeline}
               fluxMatrix={simData?.flux_matrix}
+              timeline={simData?.timeline}
               currentTimeMin={currentTimeMin}
               selectedWardId={selectedWardId}
               onSelectWard={(id) => setSelectedWardId(id)}
@@ -320,13 +338,14 @@ export default function App() {
           <ErrorBoundary fallbackTitle="Analytics Hub encountered an error.">
             <AnalyticsHub
               timesMin={timesMin}
-              currentStep={currentTimeIndex}
+              currentStep={clampedTimeIndex}
               currentTimeMin={currentTimeMin}
               selectedWardId={selectedWardId}
               setSelectedWardId={setSelectedWardId}
               regionStatus={simData?.region_status}
               regionData={simData?.region_data}
               regionDepth={simData?.region_depth}
+
               regionAffected={simData?.region_affected}
             />
           </ErrorBoundary>
