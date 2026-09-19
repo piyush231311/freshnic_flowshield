@@ -1,76 +1,90 @@
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-def generate_advanced_city(N=200, M=200, seed=42, total_pop=500_000):
+def generate_advanced_city(N=400, M=400, seed=42, total_pop=500_000, grid_size=4):
     """
-    Generates realistic synthetic city arrays mapping to the CONTRACT.md requirements.
-    Returns: dict with z, D, channel_mask, pop (all shape [N, M])
+    Generates realistic synthetic city arrays scaled to NxM (default 400x400).
+    Features:
+    - High-density population centers ('Downtown Sector' & 'Residential Basin') directly on/adjacent to the river.
+    - Topographical bowl/depression in terrain (z) under dense population centers to induce natural pooling.
+    - Meandering channel (channel_mask) running north-to-south.
+    - Region mapping (Wards 0..15).
     """
     rng = np.random.default_rng(seed)
     
     # 1. Terrain (z) using Fractal Noise
-    # Layering multiple Gaussian filters mimics Perlin noise for natural topography
-    noise_base = gaussian_filter(rng.random((N, M)), sigma=15) * 10.0
-    noise_detail = gaussian_filter(rng.random((N, M)), sigma=3) * 2.0
+    noise_base = gaussian_filter(rng.random((N, M)), sigma=max(3, int(30 * N / 400))) * 10.0
+    noise_detail = gaussian_filter(rng.random((N, M)), sigma=max(1, int(6 * N / 400))) * 2.0
     z = noise_base + noise_detail
     
-    # Add a general slope (e.g., city slopes down towards the South-East)
     yy, xx = np.mgrid[0:N, 0:M]
-    slope = (xx * 0.02) + (yy * 0.03)
+    slope = (xx * (0.02 * 400 / M)) + (yy * (0.03 * 400 / N))
     z -= slope
-    
-    # Normalize elevation to be strictly positive, spanning ~0 to 15 meters
     z = (z - z.min()) / (z.max() - z.min()) * 15.0
 
     # 2. Meandering Channel (channel_mask)
     channel_mask = np.zeros((N, M), dtype=bool)
-    # Create a sine-wave river path flowing top to bottom
     for y in range(N):
-        # River meanders horizontally; gets wider at the bottom
-        x_center = int(M / 2 + np.sin(y / 20.0) * (M / 6))
-        width = 2 + int(y / (N / 4)) 
+        x_center = int(M / 2 + np.sin(y / (N * 0.10)) * (M / 6))
+        width = max(2, int(4 * M / 400.0) + int(y / (N / 4)))
         x_start = max(0, x_center - width)
         x_end = min(M, x_center + width)
         channel_mask[y, x_start:x_end] = True
 
-    # Carve the channel into the terrain so water flows into it
-    z[channel_mask] -= 2.0 
+    # 3. Topography Tweak: Carve depression bowl under the high-density population centers
+    # Downtown Sector depression (y~0.45, x~0.40) and Residential Basin (y~0.62, x~0.52)
+    bowl_downtown = 4.0 * np.exp(-(((yy / N - 0.45) ** 2 + (xx / M - 0.40) ** 2) / (2 * 0.12 ** 2)))
+    bowl_basin = 3.0 * np.exp(-(((yy / N - 0.62) ** 2 + (xx / M - 0.52) ** 2) / (2 * 0.10 ** 2)))
+    z -= (bowl_downtown + bowl_basin)
 
-    # 3. Population Distribution (pop)
-    # Use Gaussian blobs[cite: 1] for urban centers, avoiding the river
+    # Deepen river channel relative to surrounding floodplain
+    z[channel_mask] -= 2.0 
+    z = np.clip(z - z.min() + 0.5, 0.5, None)
+
+    # 4. Population Distribution (pop)
+    # Force two major high-density population centers directly on / adjacent to the meandering river
     pop = np.zeros((N, M))
-    urban_centers = [(0.3, 0.3, 0.1), (0.7, 0.2, 0.08), (0.4, 0.8, 0.12), (0.8, 0.7, 0.09)] # (cy, cx, spread)
+    urban_centers = [
+        # (cy, cx, sigma, weight)
+        (0.45, 0.40, 0.10, 3.5),  # 1. Downtown Sector (directly overlaps river corridor)
+        (0.62, 0.52, 0.09, 2.5),  # 2. Residential Basin (adjacent to river bend)
+        (0.25, 0.75, 0.09, 0.9),  # 3. Eastern Suburban Heights
+        (0.20, 0.25, 0.08, 0.7),  # 4. North-West District
+        (0.82, 0.25, 0.08, 0.5),  # 5. South-West Outskirts
+    ]
     
-    for cy, cx, s in urban_centers:
-        pop += np.exp(-(((yy / N - cy) ** 2 + (xx / M - cx) ** 2) / (2 * s ** 2)))
+    for cy, cx, s, weight in urban_centers:
+        pop += weight * np.exp(-(((yy / N - cy) ** 2 + (xx / M - cx) ** 2) / (2 * s ** 2)))
     
-    # Push population out of the deep river channel
-    pop[channel_mask] = 0.0 
-    
-    # Scale exactly to the target total population
+    # Waterfront population: deep river channel holds minimal pop, while immediate riverbanks are dense
+    pop[channel_mask] *= 0.10
     pop = pop / pop.sum() * total_pop
 
-    # 4. Drainage Capacity (D) in mm/hr
-    # Base capacity is 15 mm/hr, highly populated areas get upgraded to 40 mm/hr
+    # 5. Drainage Capacity (D)
     D = np.full((N, M), 15.0)
     D += (pop / pop.max()) * 25.0 
-    
-    # Channels naturally carry massive amounts of water
     D[channel_mask] = 200.0
-    # Add an extreme pump station at the river's delta (bottom edge)
-    D[-5:, :] = np.where(channel_mask[-5:, :], 500.0, D[-5:, :])
+    D[-max(1, int(10 * N / 400)):, :] = np.where(channel_mask[-max(1, int(10 * N / 400)):, :], 500.0, D[-max(1, int(10 * N / 400)):, :])
+
+    # 6. Region Mapping (16-Ward Division)
+    region_map = np.zeros((N, M), dtype=int)
+    row_step, col_step = N // grid_size, M // grid_size
+    
+    region_id = 0
+    for r in range(grid_size):
+        for c in range(grid_size):
+            region_map[r*row_step:(r+1)*row_step, c*col_step:(c+1)*col_step] = region_id
+            region_id += 1
 
     return {
-        "z": z,
-        "D": D,
-        "channel_mask": channel_mask,
-        "pop": pop
+        "z": z, "D": D, "channel_mask": channel_mask, "pop": pop,
+        "region_map": region_map, "n_regions": region_id
     }
 
 if __name__ == "__main__":
-    # Quick smoke test to ensure shapes and values are correct
-    city = generate_advanced_city(N=200, M=200)
+    city = generate_advanced_city(N=400, M=400)
     print(f"Terrain range: {city['z'].min():.2f}m to {city['z'].max():.2f}m")
     print(f"Total Population: {city['pop'].sum():,.0f}")
     print(f"Max Drainage: {city['D'].max():.1f} mm/hr")
-    print("Shapes:", {k: v.shape for k, v in city.items()})
+    print(f"Total Regions (Wards): {city['n_regions']}")
+    print("Shapes:", {k: v.shape if hasattr(v, 'shape') else type(v) for k, v in city.items()})

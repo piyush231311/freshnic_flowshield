@@ -1,0 +1,168 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+@keyframes simple-flow {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}
+.animate-water-flow {
+  stroke-dasharray: 12 12;
+  animation: simple-flow 1s linear infinite;
+}
+
+@keyframes flow-forward {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes flow-reverse {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: 24; }
+}
+
+.edge-static {
+  stroke-dasharray: 0;
+}
+
+.edge-flow-forward {
+  stroke-dasharray: 12 12;
+  animation: flow-forward 1s linear infinite;
+}
+
+.edge-flow-reverse {
+  stroke-dasharray: 12 12;
+  animation: flow-reverse 1s linear infinite;
+}
+
+@keyframes pulseRadar {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 0.3;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+.animate-radar {
+  animation: pulseRadar 2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+/* Custom dark scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #090d16;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Custom range slider styling */
+input[type="range"] {
+  accent-color: #14b8a6;
+}
+
+/* Tactical Digital Twin Utilities */
+.tactical-grid-bg {
+  background-image: 
+    linear-gradient(to right, rgba(20, 184, 166, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(20, 184, 166, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.tactical-dots-bg {
+  background-image: radial-gradient(rgba(20, 184, 166, 0.15) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.glow-teal {
+  box-shadow: 0 0 20px rgba(20, 184, 166, 0.3), inset 0 0 15px rgba(20, 184, 166, 0.1);
+}
+
+.glow-amber {
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.35), inset 0 0 15px rgba(245, 158, 11, 0.15);
+}
+
+.glow-red {
+  box-shadow: 0 0 25px rgba(239, 68, 68, 0.45), inset 0 0 20px rgba(239, 68, 68, 0.2);
+}
+
+@keyframes pulseConduit {
+  0% {
+    stroke-dashoffset: 60;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-conduit {
+  animation: pulseConduit 2s linear infinite;
+}
+
+@keyframes fluidFlowForward {
+  0% {
+    stroke-dashoffset: 48;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes fluidGlowPulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 2px rgba(20, 184, 166, 0.4));
+  }
+  50% {
+    filter: drop-shadow(0 0 7px rgba(20, 184, 166, 0.8));
+  }
+}
+
+.animate-fluid-flow {
+  animation: fluidFlowForward 1.8s linear infinite;
+}
+
+@keyframes riverDrift {
+  0% {
+    stroke-dashoffset: 90;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-river-drift {
+  animation: riverDrift 6s linear infinite;
+}
+
+@keyframes flow {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+

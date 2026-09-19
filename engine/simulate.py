@@ -2,9 +2,10 @@ import numpy as np
 
 MM_HR = 1 / 1000 / 3600          # converts mm/hr to m/s
 
-def step(h, z, rain, D, f, k, dt, gain=None):
+def step(h, z, rain, D, f, k, dt, gain=None, return_out=False):
     """One time step. h, z in metres. rain, D, f in m/s. k in 1/s.
-    gain: optional [4,N,M] multipliers on outflow (N,S,W,E). >1 = faster channel, 0 = blocked."""
+    gain: optional [4,N,M] multipliers on outflow (N,S,W,E). >1 = faster channel, 0 = blocked.
+    return_out: if True, also returns out [4,N,M] directional cell outflows."""
     h = h + rain * dt                                   # 1. rain
 
     H = z + h                                           # 2. flow (water level = ground + depth)
@@ -25,6 +26,8 @@ def step(h, z, rain, D, f, k, dt, gain=None):
 
     drained = np.minimum(D * dt, h); h = h - drained   # 3. drainage
     infil = np.minimum(f * dt, h);   h = h - infil      # 4. infiltration
+    if return_out:
+        return h, drained, infil, out
     return h, drained, infil
 
 
