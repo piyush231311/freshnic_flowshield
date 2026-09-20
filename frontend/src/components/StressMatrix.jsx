@@ -15,6 +15,8 @@ import {
  * 5. Extreme Compound (75 mm/hr, 4 h, drain failure + blockage)
  * Displays 'Peak Inundation Level' and 'Peak Population at Risk' for each.
  */
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
 export default function StressMatrix({
   onLoadScenario,
   currentScenarioName = "",
@@ -28,7 +30,7 @@ export default function StressMatrix({
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch('http://127.0.0.1:8000/api/stress-matrix');
+      const res = await fetch(`${API_BASE_URL}/api/stress-matrix`);
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
       const data = await res.json();
       setScenarios(Array.isArray(data?.scenarios) ? data.scenarios : []);

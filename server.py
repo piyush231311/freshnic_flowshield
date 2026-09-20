@@ -5,7 +5,7 @@ Serves the 2D hydrodynamic flood simulation engine and scenario stress-testing
 via a high-performance REST API with CORS support for the React frontend.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

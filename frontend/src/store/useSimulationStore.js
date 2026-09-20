@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
 /**
  * useSimulationStore
  * Global state store for FlowShield Tactical Digital Twin.
@@ -46,7 +48,7 @@ export const useSimulationStore = create((set, get) => ({
     }
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/api/disruptions?grid_size=${gridSize}&drain_failure=${drainFailure}&blockage=${blockage}`
+        `${API_BASE_URL}/api/disruptions?grid_size=${gridSize}&drain_failure=${drainFailure}&blockage=${blockage}`
       );
       if (!res.ok) {
         set({ disruptionsPreview: null });
@@ -133,7 +135,7 @@ export const useSimulationStore = create((set, get) => ({
         grid_size: state.gridSize,
       };
 
-      const res = await fetch('http://127.0.0.1:8000/api/simulate', {
+      const res = await fetch(`${API_BASE_URL}/api/simulate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -155,7 +157,7 @@ export const useSimulationStore = create((set, get) => ({
       console.error('FastAPI fetch error:', err);
       set({
         isLoading: false,
-        error: err.message || 'Unable to connect to FlowShield backend on http://localhost:8000',
+        error: err.message || 'Unable to connect to FlowShield backend',
       });
     }
   },
