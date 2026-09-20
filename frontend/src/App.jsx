@@ -183,6 +183,7 @@ export default function App() {
         setBlockage={setBlockage}
         onRunSimulation={() => executeSimulation()}
         isLoading={isLoading}
+        simData={simData}
       />
 
       {/* 3. MAIN TACTICAL WORKSPACE */}

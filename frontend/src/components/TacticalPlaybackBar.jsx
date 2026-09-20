@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { 
   Play, Pause, RotateCcw, CloudRain, AlertTriangle, 
-  Droplets, Zap, Clock 
+  Droplets, Zap, Clock, CheckCircle2, AlertCircle, AlertOctagon 
 } from 'lucide-react';
+import { useSimulationStore } from '../store/useSimulationStore';
 
 /**
  * TacticalPlaybackBar
@@ -15,7 +16,7 @@ import {
  *   1. Rainfall Intensity (0 to 300 mm/hr)
  *   2. Storm Duration (1 to 24 hrs)
  *   3. Initial Water Level (0.0 to 2.5 m)
- * - Event Toggles (Drain Failure, Block Canal)
+ * - Event Toggles with Real Buttons, aria-pressed, visible ON/OFF, and multi-modal status chips
  */
 function TacticalPlaybackBar({
   currentStep,
@@ -41,8 +42,14 @@ function TacticalPlaybackBar({
   setBlockage,
   onRunSimulation,
   isLoading = false,
+  simData = null,
+  disruptionsPreview = null,
 }) {
   const speeds = [1, 2, 5];
+
+  const storeSimData = useSimulationStore((state) => state.simData);
+  const storeDisruptionsPreview = useSimulationStore((state) => state.disruptionsPreview);
+  const activeSimData = simData || storeSimData;
 
   // Format SIM CLOCK to T+000 MIN or HH:MM
   const formatSimClock = (mins) => {
@@ -51,6 +58,95 @@ function TacticalPlaybackBar({
     const m = totalMinutes % 60;
     return `T+${String(totalMinutes).padStart(3, '0')} MIN (${String(hours).padStart(2, '0')}:${String(m).padStart(2, '0')})`;
   };
+
+  // 1. Canal Status Determination (Never colour alone: words + icon + colour)
+  const canalStatus = useMemo(() => {
+    const simBlock = activeSimData?.disruptions?.find((d) => d.type === 'blockage');
+
+    // Armed state: toggle is on, but not yet run in simulation
+    if (blockage && !simBlock) {
+      return {
+        label: 'Canal blockage ARMED: press RUN SIMULATION',
+        icon: AlertCircle,
+        style: 'text-amber-300 bg-amber-950/70 border-amber-500/60',
+        dot: 'bg-amber-400 animate-ping',
+      };
+    }
+
+    // Simulated state (simData is the truth)
+    if (simBlock) {
+      const tStart = simBlock.t_start_min ?? 30.0;
+      if (currentTimeMin >= tStart) {
+        return {
+          label: `Canal BLOCKED since T+${Math.round(tStart)} min`,
+          icon: AlertOctagon,
+          style: 'text-red-300 bg-red-950/80 border-red-500/70',
+          dot: 'bg-red-400 animate-pulse',
+        };
+      } else {
+        return {
+          label: `Canal blockage scheduled at T+${Math.round(tStart)} min`,
+          icon: Clock,
+          style: 'text-amber-200 bg-amber-950/50 border-amber-500/40',
+          dot: 'bg-amber-400',
+        };
+      }
+    }
+
+    // Default: Open
+    return {
+      label: 'Canal: open',
+      icon: CheckCircle2,
+      style: 'text-emerald-300 bg-emerald-950/40 border-emerald-500/40',
+      dot: 'bg-emerald-400',
+    };
+  }, [blockage, activeSimData, currentTimeMin]);
+
+  // 2. Drain Failure Status Determination (Never colour alone: words + icon + colour)
+  const drainStatus = useMemo(() => {
+    const simDrain = activeSimData?.disruptions?.find((d) => d.type === 'drain_failure');
+
+    // Armed state: toggle is on, but not yet run in simulation
+    if (drainFailure && !simDrain) {
+      return {
+        label: 'Drain failure ARMED: press RUN SIMULATION',
+        icon: AlertCircle,
+        style: 'text-amber-300 bg-amber-950/70 border-amber-500/60',
+        dot: 'bg-amber-400 animate-ping',
+      };
+    }
+
+    // Simulated state (simData is the truth)
+    if (simDrain) {
+      const tStart = simDrain.t_start_min ?? 60.0;
+      const primaryWards = simDrain.primary_ward_ids || [9, 10, 13, 14];
+      const wardStr = primaryWards.map((id) => `W-${String(id + 1).padStart(2, '0')}`).join(', ');
+
+      if (currentTimeMin >= tStart) {
+        return {
+          label: `60% capacity lost in ${wardStr}`,
+          icon: AlertTriangle,
+          style: 'text-red-300 bg-red-950/80 border-red-500/70',
+          dot: 'bg-red-400 animate-pulse',
+        };
+      } else {
+        return {
+          label: `Drain failure scheduled at T+${Math.round(tStart)} min`,
+          icon: Clock,
+          style: 'text-amber-200 bg-amber-950/50 border-amber-500/40',
+          dot: 'bg-amber-400',
+        };
+      }
+    }
+
+    // Default: Open / Normal
+    return {
+      label: 'Drains: open',
+      icon: CheckCircle2,
+      style: 'text-emerald-300 bg-emerald-950/40 border-emerald-500/40',
+      dot: 'bg-emerald-400',
+    };
+  }, [drainFailure, activeSimData, currentTimeMin]);
 
   return (
     <div className="w-full bg-slate-900/95 border-b border-teal-500/20 shadow-xl backdrop-blur-md px-4 sm:px-6 py-3.5 text-slate-200">
@@ -188,7 +284,7 @@ function TacticalPlaybackBar({
         <div className="pt-2.5 border-t border-slate-800/80 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 text-xs">
           
           {/* THREE CONTINUOUS SLIDERS */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full xl:w-3/4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full xl:w-1/2">
             
             {/* Slider 1: Rainfall Intensity (0 to 300 mm/hr) */}
             <div className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/80 flex flex-col space-y-1.5 shadow-inner">
@@ -273,37 +369,85 @@ function TacticalPlaybackBar({
 
           </div>
 
-          {/* BONUS EVENT TOGGLE BUTTONS */}
-          <div className="flex items-center space-x-3 w-full xl:w-auto justify-end">
-            <span className="text-[11px] font-mono text-slate-400 hidden sm:inline">DISRUPTIONS:</span>
+          {/* DISRUPTIONS: TOGGLE BUTTONS & TEXT STATUS CHIPS */}
+          <div className="flex flex-col sm:flex-row flex-wrap items-start sm:items-center gap-3 w-full xl:w-1/2 justify-end">
             
-            {/* Drain Failure Toggle */}
-            <button
-              onClick={() => setDrainFailure(!drainFailure)}
-              className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-mono text-xs font-semibold border transition cursor-pointer ${
-                drainFailure
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.3)]'
-                  : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-300'
-              }`}
-            >
-              <AlertTriangle className={`w-3.5 h-3.5 ${drainFailure ? 'text-amber-400' : 'text-slate-400'}`} />
-              <span>Drain Failure (60%)</span>
-              <span className={`w-2 h-2 rounded-full ${drainFailure ? 'bg-amber-400 animate-ping' : 'bg-slate-700'}`} />
-            </button>
+            {/* Status Chips (Text + Icon + Color, never color alone) */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Drain Status Chip */}
+              <div
+                className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border shadow-sm ${drainStatus.style}`}
+                role="status"
+              >
+                <drainStatus.icon className="w-3.5 h-3.5 shrink-0" />
+                <span>{drainStatus.label}</span>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${drainStatus.dot}`} />
+              </div>
 
-            {/* Block Canal Toggle */}
-            <button
-              onClick={() => setBlockage(!blockage)}
-              className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-mono text-xs font-semibold border transition cursor-pointer ${
-                blockage
-                  ? 'bg-red-500/20 text-red-300 border-red-500 shadow-[0_0_12px_rgba(239,68,68,0.3)]'
-                  : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-300'
-              }`}
-            >
-              <Droplets className={`w-3.5 h-3.5 ${blockage ? 'text-red-400' : 'text-slate-400'}`} />
-              <span>Block Canal (100%)</span>
-              <span className={`w-2 h-2 rounded-full ${blockage ? 'bg-red-400 animate-ping' : 'bg-slate-700'}`} />
-            </button>
+              {/* Canal Status Chip */}
+              <div
+                className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold border shadow-sm ${canalStatus.style}`}
+                role="status"
+              >
+                <canalStatus.icon className="w-3.5 h-3.5 shrink-0" />
+                <span>{canalStatus.label}</span>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${canalStatus.dot}`} />
+              </div>
+            </div>
+
+            {/* Toggle Buttons (Semantic button with aria-pressed and visible ON/OFF text) */}
+            <div className="flex items-center space-x-2">
+              {/* Drain Failure Toggle */}
+              <button
+                type="button"
+                role="button"
+                aria-pressed={Boolean(drainFailure)}
+                onClick={() => setDrainFailure(!drainFailure)}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-mono text-xs font-semibold border transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-400 ${
+                  drainFailure
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.3)]'
+                    : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-300'
+                }`}
+              >
+                <AlertTriangle className={`w-3.5 h-3.5 ${drainFailure ? 'text-amber-400' : 'text-slate-400'}`} />
+                <span>Drain Failure (60%)</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono ${
+                    drainFailure
+                      ? 'bg-amber-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {drainFailure ? 'ON' : 'OFF'}
+                </span>
+              </button>
+
+              {/* Block Canal Toggle */}
+              <button
+                type="button"
+                role="button"
+                aria-pressed={Boolean(blockage)}
+                onClick={() => setBlockage(!blockage)}
+                className={`flex items-center space-x-2 px-3 py-2 rounded-lg font-mono text-xs font-semibold border transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-400 ${
+                  blockage
+                    ? 'bg-red-500/20 text-red-300 border-red-500 shadow-[0_0_12px_rgba(239,68,68,0.3)]'
+                    : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-300'
+                }`}
+              >
+                <Droplets className={`w-3.5 h-3.5 ${blockage ? 'text-red-400' : 'text-slate-400'}`} />
+                <span>Block Canal (100%)</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono ${
+                    blockage
+                      ? 'bg-red-500 text-slate-950 shadow-sm'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {blockage ? 'ON' : 'OFF'}
+                </span>
+              </button>
+            </div>
+
           </div>
 
         </div>

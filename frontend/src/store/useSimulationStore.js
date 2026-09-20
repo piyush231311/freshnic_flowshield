@@ -29,8 +29,44 @@ export const useSimulationStore = create((set, get) => ({
   setIntensityMmHr: (intensityMmHr) => set({ intensityMmHr: Number(intensityMmHr) }),
   setDurationHrs: (durationHrs) => set({ durationHrs: Number(durationHrs) }),
   setInitialWaterM: (initialWaterM) => set({ initialWaterM: Number(initialWaterM) }),
-  setDrainFailure: (drainFailure) => set({ drainFailure }),
-  setBlockage: (blockage) => set({ blockage }),
+  
+  // Disruption preview state (for immediate feedback before running simulation)
+  disruptionsPreview: null,
+
+  fetchDisruptionsPreview: async () => {
+    const { drainFailure, blockage, gridSize } = get();
+    if (!drainFailure && !blockage) {
+      set({ disruptionsPreview: [] });
+      return;
+    }
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:8000/api/disruptions?grid_size=${gridSize}&drain_failure=${drainFailure}&blockage=${blockage}`
+      );
+      if (!res.ok) {
+        set({ disruptionsPreview: null });
+        return;
+      }
+      const data = await res.json();
+      set({ disruptionsPreview: Array.isArray(data?.disruptions) ? data.disruptions : null });
+    } catch (err) {
+      console.warn('Disruptions preview fetch failed:', err);
+      set({ disruptionsPreview: null });
+    }
+  },
+
+  setDrainFailure: (drainFailure) => {
+    set({ drainFailure });
+    get().fetchDisruptionsPreview();
+  },
+  setBlockage: (blockage) => {
+    set({ blockage });
+    get().fetchDisruptionsPreview();
+  },
+  setGridSize: (gridSize) => {
+    set({ gridSize: Number(gridSize) });
+    get().fetchDisruptionsPreview();
+  },
 
   // Playback & Timeline State
   currentTimeIndex: 0,
