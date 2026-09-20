@@ -1,7 +1,8 @@
 import React from 'react';
 import {
-  Droplets, Mountain, Users, Activity, Layers, AlertTriangle, Shield
+  Droplets, Mountain, Users, Activity, Layers, AlertTriangle, Shield, Clock, AlertOctagon
 } from 'lucide-react';
+import { useSimulationStore } from '../store/useSimulationStore';
 
 /**
  * ZoneDetails
@@ -69,6 +70,81 @@ export default function ZoneDetails({
     dynamicSatPct = Math.min(100, Math.round((depthAbsorbedMm / maxStorageMm) * 1000) / 10);
     // Approximate ward cell area: 100m x 100m * 100 cells
     dynamicAbsorbedM3 = Math.round(depthAbsorbedMm * 125);
+  }
+
+  // Simulation store selectors for disruption impact comparisons
+  const simData = useSimulationStore((state) => state.simData);
+  const disruptionsPreview = useSimulationStore((state) => state.disruptionsPreview);
+  const drainFailureToggle = useSimulationStore((state) => state.drainFailure);
+  const blockageToggle = useSimulationStore((state) => state.blockage);
+  const showBaseline = useSimulationStore((state) => state.showBaseline);
+
+  // Identify disruption events (simulated truth > preview > toggles)
+  const simDrain = simData?.disruptions?.find((d) => d.type === 'drain_failure');
+  const previewDrain = disruptionsPreview?.find((d) => d.type === 'drain_failure');
+  const activeDrainEvent = simDrain || previewDrain || (drainFailureToggle ? {
+    type: 'drain_failure',
+    t_start_min: 60.0,
+    primary_ward_ids: [9, 10, 13, 14],
+    ward_overlap: { 9: 0.8, 10: 0.8, 13: 0.4, 14: 0.4, 8: 0.16, 11: 0.16, 12: 0.08, 15: 0.08 },
+  } : null);
+
+  const simBlock = simData?.disruptions?.find((d) => d.type === 'blockage');
+  const previewBlock = disruptionsPreview?.find((d) => d.type === 'blockage');
+  const activeBlockEvent = simBlock || previewBlock || (blockageToggle ? {
+    type: 'blockage',
+    t_start_min: 30.0,
+    primary_ward_ids: [10],
+    ward_overlap: { 10: 0.14 },
+  } : null);
+
+  // Check if disruptions intersect selected ward
+  const drainPrimarySet = new Set(activeDrainEvent?.primary_ward_ids || []);
+  const drainOverlap = Number(activeDrainEvent?.ward_overlap?.[selectedWardId] ?? activeDrainEvent?.ward_overlap?.[String(selectedWardId)] ?? 0);
+  const isDrainIntersects = drainPrimarySet.has(selectedWardId) || drainOverlap > 0;
+
+  const blockagePrimarySet = new Set(activeBlockEvent?.primary_ward_ids || []);
+  const isBlockageIntersects = blockagePrimarySet.has(selectedWardId);
+
+  const hasIntersectingDisruption = isDrainIntersects || isBlockageIntersects;
+
+  // Ward impact comparison from simData.impact
+  const wardImpact = simData?.impact?.per_ward?.find((w) => w.id === selectedWardId);
+  const excessPonding = wardImpact?.delta_max_depth !== undefined
+    ? Math.max(0, wardImpact.delta_max_depth)
+    : 0;
+
+  // Lead time lost calculation
+  let leadTimeLostText = 'No lead time lost (Sector remains below critical threshold)';
+  if (wardImpact?.first_critical_min_with != null && wardImpact?.first_critical_min_without != null) {
+    const diffMin = Math.round(wardImpact.first_critical_min_without - wardImpact.first_critical_min_with);
+    if (diffMin > 0) {
+      leadTimeLostText = `Critical status reached ${diffMin} mins earlier`;
+    } else {
+      leadTimeLostText = `Critical status reached at T+${Math.round(wardImpact.first_critical_min_with)}m (Unchanged)`;
+    }
+  } else if (wardImpact?.first_critical_min_with != null && wardImpact?.first_critical_min_without == null) {
+    leadTimeLostText = `Critical status reached at T+${Math.round(wardImpact.first_critical_min_with)}m (Baseline: Never Critical)`;
+  } else if (wardImpact?.worst_status_with === 2 && wardImpact?.worst_status_without !== 2) {
+    leadTimeLostText = 'Critical threshold breached due to disruption';
+  } else if (wardImpact) {
+    leadTimeLostText = 'No lead time lost (Breach onset unchanged)';
+  }
+
+  // Drain status: active local pump capacity
+  const isDrainActive = !showBaseline && Boolean(activeDrainEvent && currentMinute >= (activeDrainEvent.t_start_min ?? 60.0));
+  let drainEfficiencyText = 'Drainage Efficiency: 100% (Nominal)';
+  if (isDrainIntersects) {
+    if (isDrainActive) {
+      if (drainPrimarySet.has(selectedWardId)) {
+        drainEfficiencyText = 'Drainage Efficiency: 40% (Degraded)';
+      } else if (drainOverlap > 0) {
+        const remainingPct = Math.max(0, Math.round(100 - drainOverlap * 60));
+        drainEfficiencyText = `Drainage Efficiency: ${remainingPct}% (Degraded)`;
+      }
+    } else {
+      drainEfficiencyText = 'Drainage Efficiency: 100% (Armed - Failure scheduled at T+60m)';
+    }
   }
 
   return (
@@ -297,6 +373,66 @@ export default function ZoneDetails({
         </div>
 
       </div>
+
+      {/* Disruption Impact Delta Card */}
+      {hasIntersectingDisruption ? (
+        <div className="mt-4 p-4 rounded-xl border border-amber-500/50 bg-gradient-to-r from-amber-950/40 via-slate-950/80 to-slate-950/90 shadow-xl font-mono">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-2.5 border-b border-amber-500/30 gap-2">
+            <div className="flex items-center space-x-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400" />
+              <span className="text-xs font-bold text-amber-300 tracking-wide uppercase">
+                Disruption Impact Delta // Causal Attribution
+              </span>
+            </div>
+            <span className="text-[10px] text-amber-400/90 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30">
+              Comparing Against Unperturbed Baseline
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+            {/* 1. Excess Ponding */}
+            <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider">Excess Ponding</span>
+              <div className="text-xl font-bold text-amber-300 mt-1">
+                +{excessPonding.toFixed(2)} m
+              </div>
+              <span className="text-[10px] text-slate-400 mt-0.5">vs Normal Drainage</span>
+            </div>
+
+            {/* 2. Lead Time Lost */}
+            <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider">Lead Time Lost</span>
+              <div className="text-sm font-bold text-red-300 mt-1">
+                {leadTimeLostText}
+              </div>
+              <span className="text-[10px] text-slate-400 mt-0.5">Baseline onset comparison</span>
+            </div>
+
+            {/* 3. Drain Status */}
+            <div className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider">Drain Status</span>
+              <div className={`text-sm font-bold mt-1 ${isDrainIntersects && isDrainActive ? 'text-rose-300' : 'text-emerald-300'}`}>
+                {drainEfficiencyText}
+              </div>
+              <span className="text-[10px] text-slate-400 mt-0.5">
+                {isBlockageIntersects ? 'Culvert choked (80% flow restriction)' : 'Urban stormwater network'}
+              </span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 p-3 rounded-xl border border-slate-800 bg-slate-950/60 font-mono text-xs text-slate-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
+            <Shield className="w-4 h-4 text-teal-400 shrink-0" />
+            <span>
+              Subsurface Drainage: <strong className="text-teal-300">Nominal (Gravity-fed outflow to valley)</strong>
+            </span>
+          </div>
+          <span className="text-[10px] text-slate-500">
+            No active infrastructure failures intersecting this ward
+          </span>
+        </div>
+      )}
 
       {/* Probabilistic Warning Box (Ensemble early warning or SAFE status banner) */}
       {selectedNode.earlyWarning?.breached ? (

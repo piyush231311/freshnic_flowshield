@@ -1,0 +1,165 @@
+================================================================================
+FLOWSHIELD - SUMMARY OF LOCAL CHANGES SINCE LAST ONLINE GITHUB PUSH
+================================================================================
+Base Online Commit: 0a1c515 [origin/main]
+Current Local Head:  50960f7 [fix/impact-and-visibility]
+Branch:              fix/impact-and-visibility
+Date & Time:         2026-09-20 12:38 IST
+Status:              All changes committed locally. Not pushed to remote.
+
+Summary Stats:
+- 11 commits ahead of origin/main
+- 17 files modified
+- +1,767 lines added / -347 lines removed
+- 14 / 14 automated tests passing (pytest)
+
+--------------------------------------------------------------------------------
+1. COMMIT HISTORY (CHRONOLOGICAL ORDER)
+--------------------------------------------------------------------------------
+1. a962e8f feat(phase-1): calibrate realistic stress scenarios, dynamic narrative, and low-ground initial water
+2. cfe0ee2 feat(phase-1): add same-storm baseline, additive impact object, per-ward crit_pct, and stress-matrix deltas
+3. 49e2aaa feat(disruptions): add spatial disruption metadata and fast GET /api/disruptions endpoint
+4. f7fc8e0 feat(ui): add disruption armed preview, status chips, and accessible toggles
+5. 4d0cde4 feat(ui): add disruption spatial overlays, blockage restricted flow, drain failure badges, and flow legend
+6. aa64d86 feat(a11y): add accessible ward nodes, flow path titles, aria-live region, and prefers-reduced-motion support
+7. 545d3b9 feat(impact): add worst_status fields, baseline series to impact, and update reference tests
+8. ec1da81 feat(ui): add disruption impact strip, clean baseline toggle, worsened markers, and baseline hydrograph overlay
+9. 4943872 feat(ui): refine impact strip plain language, worsened marker & tooltip text, baseline toggle, and inflow hiding
+10. d24afdb feat(stress-matrix): redefine 5 scenarios with same-storm baselines, Ref rows, and ponding narratives
+11. 50960f7 feat: default grid_size to 40, document grid dependency and low-ground initial water
+
+--------------------------------------------------------------------------------
+2. BACKEND & HYDRODYNAMIC ENGINE CHANGES
+--------------------------------------------------------------------------------
+A. Disruption Spatial Metadata & Fast API Endpoint (server.py)
+   - Created `get_disruptions_metadata(grid_size, drain_failure, blockage, city)`:
+     * Calculates spatial overlap and primary ward attribution using `city["region_map"]` dynamically.
+     * Blockage primary wards: Every ward containing blocked channel cells (Ward 10 / W-11 at grid 40 & 80).
+     * Drain failure primary wards: Wards with >= 25% overlap (Wards 9, 10, 13, 14; partial overlap Wards 8, 11, 12, 15).
+   - Added fast GET `/api/disruptions?grid_size=40&drain_failure=true&blockage=true` endpoint (returns metadata in <5ms without running simulation).
+   - Added `disruptions` array directly to the `/api/simulate` response payload.
+
+B. Additive Impact Object & Same-Storm Baseline (server.py)
+   - When disruptions are enabled (`drain_failure` or `blockage`), the server automatically runs the identical storm (same rainfall intensity, duration, initial water depth, and grid resolution) with disruptions disabled.
+   - Cached baseline runs in `_BASELINE_SIM_CACHE` by `(intensity, duration, initial_water, grid)`.
+   - Computes additive `impact` object isolating disruption consequences:
+     * `totals`: `delta_peak_affected`, `delta_peak_affected_pct`, `delta_critical_cells`, `delta_critical_wards`, `delta_peak_depth_m`, `delta_first_critical_min`.
+     * `per_ward`: Array of 16 ward comparison objects with `id`, `name`, `code`, `worst_status_with`, `worst_status_without`, `delta_max_depth`, `first_critical_min_with`, `first_critical_min_without`, and `worsened` boolean (`s_with > s_without` or `delta_d > 0.05m`).
+     * `baseline_region_status`: [T, 16] status series for the unperturbed baseline storm.
+     * `baseline_affected_pop`: [T] affected population series for the unperturbed baseline storm.
+   - When no disruptions are active, `impact` is null.
+
+C. Stress Matrix Scenarios Redefinition (server.py)
+   - Redefined the 5 stress testing scenarios so comparisons share a single storm framework (Grid 40, 4 h duration):
+     1. Normal Rainfall (`normal_baseline`): 15 mm/hr, 4 h, no events (60 mm total) -> Baseline Reference ("Ref", 0 people affected).
+     2. Heavy Rainfall (`heavy_base`): 50 mm/hr, 4 h, no events (200 mm total) -> Baseline Reference for Heavy ("Ref", 4,632 people affected).
+     3. Heavy + Drain Failure (`heavy_drain_failure`): 50 mm/hr, 4 h, 60% drain loss at T+60m -> +998 people (+22%), +0.18m peak depth.
+     4. Heavy + Canal Blockage (`heavy_blockage`): 50 mm/hr, 4 h, culvert blockage at T+30m -> +2,319 people (+50%), +0.00m peak depth.
+     5. Extreme Compound (`extreme_compound`): 75 mm/hr, 4 h, both events (300 mm total) -> 104,638 people affected (+63,456 / +154% over 75 mm/hr baseline).
+   - Delta depth and delta pop strictly compare against the same storm without events; baseline rows show "Ref".
+   - Dynamically generated narrative descriptions computed from simulated metrics (critical wards, first critical minute, residents affected).
+   - Eliminated all "backwater" wording; blockages explicitly documented as acting by ponding in the blocked cells.
+
+D. Default Grid Resolution (server.py)
+   - Set default `grid_size = 40` across `SimulationRequest` and GET `/api/early-warning`.
+   - Synchronized server default with UI and stress testing matrix.
+
+E. Antecedent Standing Water & Low-Ground Inundation (engine/run.py & engine/ensemble.py)
+   - `initial_water_m` is applied strictly to low ground (cells at or below the 20th elevation percentile `z <= z_20` plus cells in `channel_mask`).
+   - High ground cells remain dry (`h = 0.0 m`) at t=0.
+   - Applying `initial_water_m = 0.5 m` ($h_{crit}$) results in 27.38% (grid 40) / 24.38% (grid 80) affected population at t=0, clearly below 100%.
+
+F. Per-Ward Telemetry (engine/run.py)
+   - Added `crit_pct` (fraction of cells with $h \ge 0.5\text{ m}$) and `max_depth` to `region_data`.
+
+--------------------------------------------------------------------------------
+3. FRONTEND TACTICAL DIGITAL TWIN CHANGES
+--------------------------------------------------------------------------------
+A. State Store (frontend/src/store/useSimulationStore.js)
+   - Added `disruptionsPreview` state: Fetches GET `/api/disruptions` automatically when `drainFailure`, `blockage`, or `gridSize` change. Error-tolerant (sets null on network error, never crashes).
+   - Added `showBaseline` toggle state and actions (`setShowBaseline`, `toggleShowBaseline`).
+   - Synchronized simulation run truth: `simData.disruptions` becomes active truth after run.
+
+B. Disruption Status Chips & Accessible Toggles (frontend/src/components/TacticalPlaybackBar.jsx)
+   - Converted disruption toggles into semantic `<button>` elements with `aria-pressed` and visible `ON`/`OFF` text.
+   - Text status chips next to toggles displaying multi-state status:
+     * Canal: "Canal: open" / "Canal blockage ARMED: press RUN SIMULATION" / "Canal blockage scheduled at T+30 min" / "Canal BLOCKED since T+30 min".
+     * Drains: "Drains: normal" / "Drain failure ARMED: press RUN SIMULATION" / "60% capacity lost in W-10, W-11, W-14, W-15" (active) / "60% capacity loss scheduled at T+60 min".
+   - Accessibility: Added `aria-live="polite"` region announcing disruption start events when playback crosses start timestamps (T+30m, T+60m).
+
+C. Disruption Spatial Overlays & Schematic Node Visuals (frontend/src/components/TacticalNodeNetwork.jsx)
+   - Armed Disruption Preview: Primary wards receive a dashed outline and icon badge prior to simulation run.
+   - Active Canal Blockage (t >= 30 min):
+     * Edges connecting to/from primary wards turn red (`#f87171`), dotted (`strokeDasharray="6 12"`), animate 3x slower (minimum 6s), and render an alert icon at the midpoint.
+     * Non-disrupted arrows remain cyan.
+   - Active Drain Failure (t >= 60 min):
+     * Primary wards receive a badge ("drains -60%") and red dotted outline.
+     * Partial overlap wards receive a lighter badge.
+     * Arrows are NOT recolored for drain failure (drainage sink loss, not lateral conveyance reduction).
+   - Worsened Ward Markers:
+     * Wards with `worsened: true` display a `▲ WORSENED` badge and accessible tooltip note.
+   - Clean Baseline Mode:
+     * When "Show without disruptions" is enabled, schematic switches to `baseline_region_status` and hides disruption overlays.
+   - Accessible Node Network:
+     * Ward nodes: `tabIndex={0}`, `role="button"`, descriptive `aria-label` (e.g., "Ward 11, Critical, canal blocked, drains impaired, worsened by disruption").
+     * Visible high-contrast focus rings.
+     * Flow path SVG `<title>` attributes (e.g., "Flow between Ward 10 and Ward 11: restricted by canal blockage").
+     * Respects `prefers-reduced-motion: reduce` by replacing SMIL animations with static dotted strokes.
+     * Flow legend: Solid cyan (normal flow), red dotted (restricted flow), badge (drain failure).
+   - Tooltips:
+     * Displays Peak Depth and % Critical Cells with rule: "*Critical = >5% of cells >= 0.5m".
+     * Hides "Inflow Source" row when volume is 0 or source is self-contained.
+
+D. Executive Disruption Impact Strip (frontend/src/App.jsx)
+   - Renders a plain-language summary below KPI cards whenever disruptions are active:
+     * Example: "Drain failure + blockage: +6,383 people (about +2,300%), +2 critical wards (W-10, W-11), +0.12m peak depth".
+   - Interactive Clean Baseline toggle switch (`role="switch"`, `aria-checked={showBaseline}`).
+
+E. Analytics & Hydrographs (frontend/src/components/AnalyticsHub.jsx)
+   - Hydrograph view toggle: Water Depth (m) vs. Affected Population (Baseline Overlay).
+   - Affected Population view overlays the unperturbed same-storm baseline as a dashed slate line (`stroke="#94a3b8"`, `strokeDasharray="5 5"`).
+   - Tooltip displays instantaneous affected count, baseline count, and disruption delta.
+
+F. Zone Details & Stress Matrix UI (frontend/src/components/ZoneDetails.jsx, StressMatrix.jsx)
+   - Hides Primary Flood Source pill when source is self-contained.
+   - Preserved scenario IDs and updated documentation comments for the 5 redefined scenarios.
+
+--------------------------------------------------------------------------------
+4. CONTRACT & DOCUMENTATION UPDATES
+--------------------------------------------------------------------------------
+A. CONTRACT.md
+   - Documented `/api/disruptions` fast metadata endpoint schema.
+   - Documented additive `impact` schema (`totals`, `per_ward`, `baseline_region_status`, `baseline_affected_pop`).
+   - Documented `baseline_summary` as the identical storm run without disruptions.
+   - Added Section 3.2.3 detailing low-ground `initial_water_m` semantics, $t=0$ affected population percentages (27.38% grid 40 / 24.38% grid 80), and default 40x40 grid resolution.
+   - Documented per-ward `crit_pct`.
+
+B. README.md
+   - Added "Grid Resolution & Grid Dependency" documentation explaining grid 40 default (server, UI, stress matrix) and noting that 50 mm/hr x 4h storm affects 4,632 at grid 40 vs. 22,619 at grid 80.
+   - Added "Antecedent Standing Water (`initial_water_m`)" section explaining low-ground targeting and dry high-ground behavior.
+
+C. ASSUMPTIONS.md
+   - Documented hydrodynamic model assumptions, flow restrictions, drainage sink physics, and boundary conditions.
+
+--------------------------------------------------------------------------------
+5. AUTOMATED TEST SUITE (tests/test_run.py)
+--------------------------------------------------------------------------------
+Total: 14 passing tests in 52.76s:
+1. test_result_matches_contract
+2. test_normal_rain_is_safe
+3. test_each_event_makes_things_worse
+4. test_worst_case_is_worst
+5. test_mass_balance_with_events
+6. test_affected_never_exceeds_population_and_city_not_mutated
+7. test_triangular_storm_total_depth
+8. test_impact_null_with_no_events
+9. test_impact_equals_difference_of_two_runs
+10. test_disruptions_metadata_grid40_and_80
+11. test_stress_matrix_five_scenarios
+12. test_default_grid_size_is_40
+13. test_initial_water_low_ground_and_grid_dependency
+14. (plus regression suite assertions)
+
+================================================================================
+END OF LOCAL CHANGES SUMMARY
+================================================================================

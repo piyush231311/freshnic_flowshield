@@ -490,6 +490,11 @@ function TacticalNodeNetwork({
                   <stop offset="50%" stopColor="#ef4444" stopOpacity="1" />
                   <stop offset="100%" stopColor="#b91c1c" stopOpacity="0.8" />
                 </linearGradient>
+
+                {/* Crosshatch pattern for choked / restricted conduits */}
+                <pattern id="conduitCrosshatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+                  <line x1="0" y1="0" x2="0" y2="6" stroke="#f59e0b" strokeWidth="1.5" />
+                </pattern>
               </defs>
 
               {/* Conduits (Edges) with Sleek Tactical Fluid Streams & Smooth Node-Offset Curvature */}
@@ -498,6 +503,12 @@ function TacticalNodeNetwork({
                   const uNode = nodes[edge.from];
                   const vNode = nodes[edge.to];
                   if (!uNode || !vNode) return null;
+
+                  const sourceWard = uNode;
+                  const targetWard = vNode;
+
+                  // Zero Water Gate: Water cannot flow through dry air
+                  const waterPresent = (sourceWard?.depth || 0) > 0.01 || (targetWard?.depth || 0) > 0.01;
 
                   // Telemetry Parsing & Water Gradient Fallback Logic
                   const eData = edgeMap.get(edge.key);
@@ -513,32 +524,36 @@ function TacticalNodeNetwork({
                   } : null));
 
                   const rawFlux = Number(edgeData?.flux) || 0;
-                  let effectiveVolume = Math.abs(rawFlux);
+                  let currentFlux = Math.abs(rawFlux);
                   let isReverse = rawFlux < 0;
 
-                  // Fallback: If rawFlux === 0, calculate hydraulic head difference
-                  if (rawFlux === 0) {
-                    const elevA = uNode.elevation ?? uNode.averageElevation ?? 0;
-                    const depthA = uNode.waterDepth ?? uNode.depth ?? 0;
-                    const elevB = vNode.elevation ?? vNode.averageElevation ?? 0;
-                    const depthB = vNode.waterDepth ?? vNode.depth ?? 0;
+                  // Fallback: If rawFlux === 0 and water is present, calculate hydraulic head difference
+                  if (currentFlux === 0 && waterPresent) {
+                    const elevA = sourceWard.elevation ?? sourceWard.averageElevation ?? 0;
+                    const depthA = sourceWard.waterDepth ?? sourceWard.depth ?? 0;
+                    const elevB = targetWard.elevation ?? targetWard.averageElevation ?? 0;
+                    const depthB = targetWard.waterDepth ?? targetWard.depth ?? 0;
 
                     const headDiff = (elevA + depthA) - (elevB + depthB);
 
-                    if (Math.abs(headDiff) > 0.02 || depthA > 0.05 || depthB > 0.05) {
-                      effectiveVolume = Math.abs(headDiff) * 5;
+                    if (Math.abs(headDiff) > 0.01) {
+                      currentFlux = Math.min(1.0, Math.abs(headDiff) * Math.max(depthA, depthB));
                       isReverse = headDiff < 0;
                     }
                   }
 
-                  // Task 2: High-Contrast Inactive vs. Active Channels
-                  const isDormant = effectiveVolume <= 0.01;
+                  // Zero Water Gate: If !waterPresent or actual dynamic flux volume is < 0.005, channel is dry/dormant
+                  const isFlowActive = waterPresent && currentFlux >= 0.005;
 
-                  // Task 1: Refined Stroke Width (executive tactical range: 2.5px to 3.5px, max 5px during flood surges)
-                  const dynamicWidth = Math.min(5.0, Math.max(2.5, 2.5 + effectiveVolume * 1.0));
+                  // Smooth Continuous Velocity Scaling: clamped linear scale
+                  const maxExpectedFlux = 1.0;
+                  const normFlow = Math.min(1.0, Math.max(0.0, currentFlux / maxExpectedFlux));
+
+                  // Map strokeWidth smoothly between 2.0px and 4.5px
+                  const dynamicWidth = 2.0 + normFlow * 2.5;
                   
-                  // Task 1: Recalibrated Cycle Duration (dur) - Deliberate, readable human tracking
-                  const animationDuration = Math.max(2.0, 4.5 - (effectiveVolume * 1.0));
+                  // Map animation duration smoothly: ranges from 4.5s (trickle) down to 2.0s (torrent)
+                  const animationDuration = Number((4.5 - normFlow * 2.5).toFixed(2));
 
                   // Task 3: Smooth, Natural Conduit Curvature & Clean Node Boundary Offset
                   const NODE_RADIUS = 32;
@@ -599,16 +614,16 @@ function TacticalNodeNetwork({
                   const edgeTravel = touchesBlockage ? '72' : '100';
 
                   const pathTitle = touchesBlockage
-                    ? `Flow between Ward ${edge.from + 1} and Ward ${edge.to + 1}: restricted by canal blockage`
-                    : isDormant
-                    ? `Flow between Ward ${edge.from + 1} and Ward ${edge.to + 1}: dormant flow`
-                    : `Flow between Ward ${edge.from + 1} and Ward ${edge.to + 1}: normal flow`;
+                    ? 'CONDUIT RESTRICTED: Conveyance choked by 80% → Backwater surcharge ponding upstream'
+                    : isFlowActive
+                    ? `Flow between Ward ${edge.from + 1} and Ward ${edge.to + 1}: normal flow (${currentFlux.toFixed(3)} m³/s)`
+                    : `Flow between Ward ${edge.from + 1} and Ward ${edge.to + 1}: dry conduit bed`;
 
                   return (
                     <g key={edge.key}>
                       <title>{pathTitle}</title>
 
-                      {/* Task 3: Background Conduit Bed - Static, subtle slate pipe */}
+                      {/* Background Conduit Bed - Static, understated bed (#0e3a4e, opacity: 0.25) */}
                       <path
                         d={pathString}
                         stroke={touchesBlockage ? '#7f1d1d' : '#0e3a4e'}
@@ -616,13 +631,13 @@ function TacticalNodeNetwork({
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         fill="none"
-                        opacity={touchesBlockage ? 0.6 : 0.3}
+                        opacity={touchesBlockage ? 0.6 : 0.25}
                       >
                         <title>{pathTitle}</title>
                       </path>
 
-                      {/* Foreground Flowing Stream - Red dotted & 3x slower for Blockage Active, Solid Cyan for normal flow */}
-                      {(!isDormant || touchesBlockage) && (
+                      {/* Foreground Flowing Stream - Gated: ONLY visible when water is present and flux >= 0.005 */}
+                      {isFlowActive && (
                         <path
                           d={pathString}
                           stroke={edgeStroke}
@@ -631,7 +646,7 @@ function TacticalNodeNetwork({
                           strokeLinecap="round"
                           strokeLinejoin="round"
                           fill="none"
-                          opacity={touchesBlockage ? 0.95 : Math.min(1.0, 0.85 + effectiveVolume * 0.1)}
+                          opacity={touchesBlockage ? 0.95 : Math.min(1.0, 0.8 + normFlow * 0.2)}
                           style={{
                             filter: touchesBlockage
                               ? 'drop-shadow(0 0 6px rgba(248, 113, 113, 0.6))'
@@ -653,20 +668,50 @@ function TacticalNodeNetwork({
                         </path>
                       )}
 
-                      {/* Small icon at the edge midpoint for active blockage */}
+                      {/* Cross-hatched / amber restriction marker for active canal blockage */}
                       {touchesBlockage && (
-                        <g transform={`translate(${midX.toFixed(1)}, ${midY.toFixed(1)})`} className="pointer-events-none select-none">
-                          <circle
-                            r="9"
-                            fill="#0f172a"
-                            stroke="#f87171"
+                        <g transform={`translate(${midX.toFixed(1)}, ${midY.toFixed(1)})`} className="cursor-help select-none">
+                          <title>CONDUIT RESTRICTED: Conveyance choked by 80% → Backwater surcharge ponding upstream</title>
+                          <rect
+                            x="-15"
+                            y="-9"
+                            width="30"
+                            height="18"
+                            rx="3"
+                            fill="#1e1b4b"
+                            stroke="#f59e0b"
                             strokeWidth="1.5"
-                            style={{ filter: 'drop-shadow(0 0 6px rgba(248, 113, 113, 0.7))' }}
+                            style={{ filter: 'drop-shadow(0 0 8px rgba(245, 158, 11, 0.7))' }}
                           />
-                          {/* Mini Hazard Octagon Icon */}
-                          <polygon points="-2.2,-5 2.2,-5 5,-2.2 5,2.2 2.2,5 -2.2,5 -5,2.2 -5,-2.2" fill="#ef4444" />
-                          <line x1="0" y1="-2.5" x2="0" y2="0.5" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" />
-                          <circle cx="0" cy="2.5" r="0.7" fill="#ffffff" />
+                          <rect
+                            x="-13"
+                            y="-7"
+                            width="26"
+                            height="14"
+                            rx="2"
+                            fill="url(#conduitCrosshatch)"
+                            opacity="0.8"
+                          />
+                          <rect
+                            x="-11"
+                            y="-5"
+                            width="22"
+                            height="10"
+                            rx="1.5"
+                            fill="#0f172a"
+                            opacity="0.9"
+                          />
+                          <text
+                            x="0"
+                            y="3"
+                            textAnchor="middle"
+                            fill="#fbbf24"
+                            fontSize="7.5"
+                            fontFamily="monospace"
+                            fontWeight="bold"
+                          >
+                            -80%
+                          </text>
                         </g>
                       )}
                     </g>
@@ -824,7 +869,10 @@ function TacticalNodeNetwork({
 
                   {/* 3. Drain Failure Active: Primary Ward Badge ("drains -60%") */}
                   {isDrainPrimary && (
-                    <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-red-950/95 border border-red-500 text-red-300 font-mono text-[9px] font-bold tracking-tight whitespace-nowrap shadow-md z-30 flex items-center gap-1">
+                    <div
+                      className="absolute -bottom-3 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-red-950/95 border border-red-500 text-red-300 font-mono text-[9px] font-bold tracking-tight whitespace-nowrap shadow-md z-30 flex items-center gap-1 cursor-help"
+                      title="PUMP FAILURE: Local outflow reduced by 60% → Accelerated inundation & delayed drainage"
+                    >
                       <Droplets className="w-2.5 h-2.5 text-red-400" />
                       <span>drains -60%</span>
                     </div>
@@ -832,7 +880,10 @@ function TacticalNodeNetwork({
 
                   {/* 3. Drain Failure Active: Partial Ward Lighter Badge */}
                   {isDrainPartial && (
-                    <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-slate-900/90 border border-amber-500/50 text-amber-300/90 font-mono text-[8px] font-semibold tracking-tight whitespace-nowrap shadow-md z-30 flex items-center gap-0.5">
+                    <div
+                      className="absolute -bottom-3 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-slate-900/90 border border-amber-500/50 text-amber-300/90 font-mono text-[8px] font-semibold tracking-tight whitespace-nowrap shadow-md z-30 flex items-center gap-0.5 cursor-help"
+                      title={`PUMP FAILURE: Local outflow reduced by ${partialLossPct}% → Accelerated inundation & delayed drainage`}
+                    >
                       <span>drains -{partialLossPct}%</span>
                     </div>
                   )}
@@ -1003,6 +1054,42 @@ function TacticalNodeNetwork({
                       );
                     }
                     return null;
+                  })()}
+
+                  {/* Active Disruption Operational Consequences in Tooltip */}
+                  {!showBaseline && (() => {
+                    const isDrainActiveWard = Boolean(drainDisruption?.isActive && (drainPrimarySet.has(node.id) || (drainDisruption?.ward_overlap?.[node.id] || 0) > 0));
+                    const isBlockageActiveWard = Boolean(blockageDisruption?.isActive && blockagePrimarySet.has(node.id));
+
+                    if (!isDrainActiveWard && !isBlockageActiveWard) return null;
+
+                    return (
+                      <div className="mt-2 space-y-1.5">
+                        {isDrainActiveWard && (
+                          <div className="p-2 rounded bg-red-950/90 border border-red-500/70 text-red-200">
+                            <div className="flex items-center gap-1.5 font-bold text-red-300 text-[10px]">
+                              <Droplets className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                              <span>PUMP FAILURE</span>
+                            </div>
+                            <div className="text-[9px] text-red-200/90 mt-0.5 leading-snug">
+                              Local outflow reduced by 60% → Accelerated inundation & delayed drainage
+                            </div>
+                          </div>
+                        )}
+
+                        {isBlockageActiveWard && (
+                          <div className="p-2 rounded bg-amber-950/90 border border-amber-500/70 text-amber-200">
+                            <div className="flex items-center gap-1.5 font-bold text-amber-300 text-[10px]">
+                              <AlertOctagon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                              <span>CONDUIT RESTRICTED</span>
+                            </div>
+                            <div className="text-[9px] text-amber-200/90 mt-0.5 leading-snug">
+                              Conveyance choked by 80% → Backwater surcharge ponding upstream
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
                   })()}
 
                   {/* Early Warning Forecast (if breached) with Live Countdown */}
