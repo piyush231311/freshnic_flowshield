@@ -7,7 +7,7 @@ import TacticalNodeNetwork from './components/TacticalNodeNetwork';
 import AnalyticsHub from './components/AnalyticsHub';
 import StressMatrix from './components/StressMatrix';
 import ErrorBoundary from './components/ErrorBoundary';
-import { ShieldCheck, AlertCircle, RefreshCw, Cpu, Activity, Droplets } from 'lucide-react';
+import { ShieldCheck, AlertCircle, RefreshCw, Cpu, Activity, Droplets, AlertTriangle, Split } from 'lucide-react';
 
 /**
  * App: FlowShield Tactical Digital Twin
@@ -43,6 +43,8 @@ export default function App() {
   const isLoading = useSimulationStore((state) => state.isLoading);
   const error = useSimulationStore((state) => state.error);
   const executeSimulation = useSimulationStore((state) => state.executeSimulation);
+  const showBaseline = useSimulationStore((state) => state.showBaseline);
+  const toggleShowBaseline = useSimulationStore((state) => state.toggleShowBaseline);
 
   const playTimerRef = useRef(null);
 
@@ -312,6 +314,52 @@ export default function App() {
             <span className="text-[10px] font-mono text-slate-400">Active red alert zones</span>
           </div>
         </div>
+
+        {/* Plain-Language Disruption Additive Impact Strip */}
+        {simData?.impact && (
+          <div className="bg-slate-900/95 border border-amber-500/40 rounded-xl p-3.5 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-mono">
+            <div className="flex items-center space-x-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              <div>
+                <span className="font-bold text-amber-300">DISRUPTION IMPACT: </span>
+                <span className="text-slate-200">
+                  {(() => {
+                    const hasDrain = Boolean(drainFailure);
+                    const hasBlock = Boolean(blockage);
+                    const label = hasDrain && hasBlock ? 'Drain failure + blockage' : hasDrain ? 'Drain failure' : 'Canal blockage';
+                    const totals = simData.impact.totals || {};
+                    const worsenedWards = (simData.impact.per_ward || [])
+                      .filter((w) => w.worsened)
+                      .map((w) => w.code || `W-${String(w.id + 1).padStart(2, '0')}`)
+                      .join(', ');
+                    const wardsStr = worsenedWards ? ` (${worsenedWards})` : '';
+
+                    return `${label}: +${Math.round(totals.delta_peak_affected || 0).toLocaleString()} people (+${totals.delta_peak_affected_pct || 0}%), +${totals.delta_critical_wards || 0} critical wards${wardsStr}, +${totals.delta_peak_depth_m || 0}m peak depth`;
+                  })()}
+                </span>
+              </div>
+            </div>
+
+            {/* Clean Baseline Comparison Toggle */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showBaseline}
+              onClick={toggleShowBaseline}
+              className={`px-3 py-1.5 rounded-lg border font-mono font-bold text-xs flex items-center space-x-2 transition cursor-pointer shrink-0 focus:outline-none focus:ring-2 focus:ring-teal-400 ${
+                showBaseline
+                  ? 'bg-teal-500/20 text-teal-300 border-teal-500 shadow-[0_0_10px_rgba(20,184,166,0.3)]'
+                  : 'bg-slate-950/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-300'
+              }`}
+            >
+              <Split className="w-3.5 h-3.5 text-teal-400" />
+              <span>Clean Baseline:</span>
+              <span className={`px-1.5 py-0.2 rounded text-[10px] ${showBaseline ? 'bg-teal-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
+                {showBaseline ? 'ON' : 'OFF'}
+              </span>
+            </button>
+          </div>
+        )}
 
         {/* TAB 1: CITY MAP (CORE VIEW WITH STATUS-LINKED RAIN ANIMATION) */}
         {activeTab === 'map' && (

@@ -62,6 +62,7 @@ function TacticalNodeNetwork({
   const simData = useSimulationStore((state) => state.simData);
   const drainFailureToggle = useSimulationStore((state) => state.drainFailure);
   const blockageToggle = useSimulationStore((state) => state.blockage);
+  const showBaseline = useSimulationStore((state) => state.showBaseline);
 
   // 1. Resolve Blockage Disruption State (Simulated truth > Preview armed)
   const blockageDisruption = useMemo(() => {
@@ -80,8 +81,8 @@ function TacticalNodeNetwork({
 
     const tStart = event?.t_start_min ?? 30.0;
     const isSimulated = Boolean(simBlock);
-    const isActive = isSimulated && currentTimeMin >= tStart;
-    const isArmed = (blockageToggle || Boolean(previewBlock) || isSimulated) && !isActive;
+    const isActive = !showBaseline && isSimulated && currentTimeMin >= tStart;
+    const isArmed = !showBaseline && (blockageToggle || Boolean(previewBlock) || isSimulated) && !isActive;
 
     return {
       ...event,
@@ -90,7 +91,7 @@ function TacticalNodeNetwork({
       isArmed,
       tStart,
     };
-  }, [simData, disruptionsPreview, blockageToggle, currentTimeMin]);
+  }, [simData, disruptionsPreview, blockageToggle, currentTimeMin, showBaseline]);
 
   // 2. Resolve Drain Failure Disruption State (Simulated truth > Preview armed)
   const drainDisruption = useMemo(() => {
@@ -99,8 +100,9 @@ function TacticalNodeNetwork({
 
     const event = simDrain || previewDrain || (drainFailureToggle ? {
       type: 'drain_failure',
-      label: 'Drain Failure (60% capacity loss)',
+      label: 'Drain Failure (W-10, W-11, W-14, W-15)',
       t_start_min: 60.0,
+      severity_or_loss: 0.60,
       primary_ward_ids: [9, 10, 13, 14],
       ward_overlap: { 9: 0.8, 10: 0.8, 13: 0.4, 14: 0.4, 8: 0.16, 11: 0.16, 12: 0.08, 15: 0.08 },
     } : null);
@@ -109,8 +111,8 @@ function TacticalNodeNetwork({
 
     const tStart = event?.t_start_min ?? 60.0;
     const isSimulated = Boolean(simDrain);
-    const isActive = isSimulated && currentTimeMin >= tStart;
-    const isArmed = (drainFailureToggle || Boolean(previewDrain) || isSimulated) && !isActive;
+    const isActive = !showBaseline && isSimulated && currentTimeMin >= tStart;
+    const isArmed = !showBaseline && (drainFailureToggle || Boolean(previewDrain) || isSimulated) && !isActive;
 
     return {
       ...event,
@@ -230,9 +232,12 @@ function TacticalNodeNetwork({
         const x = paddingX + c * stepX;
         const y = paddingY + r * stepY;
 
-        // Extract status for current time step
+        // Extract status for current time step (or clean baseline if showBaseline is active)
         let status = 0;
-        if (regionStatus && regionStatus[safeStep] && regionStatus[safeStep][id] !== undefined) {
+        const baselineStatusArr = simData?.impact?.baseline_region_status || simData?.baseline_region_status;
+        if (showBaseline && baselineStatusArr && baselineStatusArr[safeStep]) {
+          status = baselineStatusArr[safeStep][id] ?? 0;
+        } else if (regionStatus && regionStatus[safeStep] && regionStatus[safeStep][id] !== undefined) {
           status = regionStatus[safeStep][id] ?? 0;
         }
 
@@ -281,6 +286,12 @@ function TacticalNodeNetwork({
           ? Number(rData.soil_saturation_pct[safeStep]) || 0
           : Number(rData?.soil_saturation_pct ?? zData?.soil_saturation_pct ?? 0);
 
+        const critPct = currentWardData.crit_pct !== undefined
+          ? Number(currentWardData.crit_pct) || 0
+          : Array.isArray(rData?.crit_pct)
+          ? Number(rData.crit_pct[safeStep]) || 0
+          : Number(rData?.peak_crit_pct ?? rData?.crit_pct ?? zData?.crit_pct ?? 0);
+
         list.push({
           id,
           code,
@@ -292,6 +303,8 @@ function TacticalNodeNetwork({
           status,
           depth,
           peakDepth,
+          maxDepth: peakDepth,
+          critPct,
           affected,
           totalPop,
           averageElevation,
@@ -312,7 +325,7 @@ function TacticalNodeNetwork({
       }
     }
     return list;
-  }, [currentStep, regionStatus, regionData, regionDepth, regionAffected, zones, timeline, stepX, stepY]);
+  }, [currentStep, regionStatus, regionData, regionDepth, regionAffected, zones, timeline, stepX, stepY, showBaseline, simData]);
 
   // Currently selected node for the Pinned Zone Details Panel
   const selectedNode = useMemo(() => {
@@ -437,6 +450,10 @@ function TacticalNodeNetwork({
               <div className="flex items-center space-x-1.5">
                 <span className="px-1.5 py-0.5 rounded bg-red-950/80 border border-red-500 text-red-300 text-[10px] font-bold">drains -60%</span>
                 <span className="text-slate-300">drain failure</span>
+              </div>
+              <div className="flex items-center space-x-1.5">
+                <span className="px-1.5 py-0.5 rounded bg-rose-950/95 border border-rose-500 text-rose-300 text-[10px] font-extrabold">▲ WORSENED</span>
+                <span className="text-slate-300">worsened</span>
               </div>
             </div>
           </div>
@@ -677,7 +694,11 @@ function TacticalNodeNetwork({
               // Blockage Active
               const isBlockageActiveWard = Boolean(blockageDisruption?.isActive && blockagePrimarySet.has(node.id));
 
-              // Accessibility: Descriptive aria-label (e.g. "Ward 11, Critical, canal blocked, drains impaired")
+              // Disruption Worsened State
+              const wardImpact = simData?.impact?.per_ward?.find((w) => w.id === node.id);
+              const isWorsened = Boolean(wardImpact?.worsened);
+
+              // Accessibility: Descriptive aria-label (e.g. "Ward 11, Critical, canal blocked, drains impaired, worsened by disruption")
               const statusCapitalized = cfg.label.charAt(0).toUpperCase() + cfg.label.slice(1).toLowerCase();
               const disruptionParts = [];
               if (isBlockageActiveWard) {
@@ -691,6 +712,9 @@ function TacticalNodeNetwork({
                 disruptionParts.push(`drains partially impaired (-${partialLossPct}%)`);
               } else if (isDrainArmed) {
                 disruptionParts.push('drain failure armed');
+              }
+              if (isWorsened && !showBaseline) {
+                disruptionParts.push('worsened by disruption');
               }
               const disruptionStr = disruptionParts.length > 0 ? `, ${disruptionParts.join(', ')}` : '';
               const wardAriaLabel = `Ward ${node.id + 1}, ${statusCapitalized}${disruptionStr}`;
@@ -783,6 +807,16 @@ function TacticalNodeNetwork({
                       title="Canal Blocked"
                     >
                       <AlertOctagon className="w-3.5 h-3.5 text-white stroke-[2.5]" />
+                    </div>
+                  )}
+
+                  {/* Worsened by Disruption Marker */}
+                  {isWorsened && !showBaseline && (
+                    <div
+                      className="absolute -top-2.5 -left-2.5 px-1.5 py-0.5 rounded bg-rose-950/95 border border-rose-500 text-rose-300 font-mono text-[8px] font-extrabold shadow-md z-30 flex items-center gap-0.5"
+                      title="Worsened by disruption"
+                    >
+                      <span>▲ WORSENED</span>
                     </div>
                   )}
 
@@ -896,6 +930,31 @@ function TacticalNodeNetwork({
                     />
                   </div>
 
+                  {/* Peak / Max Depth */}
+                  <div className="flex items-center justify-between pt-0.5">
+                    <span className="text-slate-400 flex items-center gap-1">
+                      <Activity className="w-3.5 h-3.5 text-indigo-400" />
+                      Peak Depth:
+                    </span>
+                    <span className="text-white font-bold">
+                      {(node.maxDepth ?? node.peakDepth ?? 0).toFixed(2)} m
+                    </span>
+                  </div>
+
+                  {/* % Critical Cells */}
+                  <div className="flex items-center justify-between pt-0.5">
+                    <span className="text-slate-400 flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                      % Critical Cells:
+                    </span>
+                    <span className="text-red-300 font-bold">
+                      {((node.critPct ?? 0) * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="text-[9px] text-slate-400 italic">
+                    *Critical = &gt;5% of cells &ge; 0.5m
+                  </div>
+
                   {/* Average Elevation */}
                   <div className="flex items-center justify-between pt-1">
                     <span className="text-slate-400 flex items-center gap-1">
@@ -918,16 +977,17 @@ function TacticalNodeNetwork({
                     </span>
                   </div>
 
-
-                  {/* Primary Inflow Source */}
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-slate-400 flex items-center gap-1">
-                      Inflow Source:
-                    </span>
-                    <span className="text-cyan-300 font-bold">
-                      {node.primaryFloodSource || 'Self-Contained'}
-                    </span>
-                  </div>
+                  {/* Primary Inflow Source (hidden if Self-Contained or none) */}
+                  {node.primaryFloodSource && node.primaryFloodSource !== 'Self-Contained' && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-slate-400 flex items-center gap-1">
+                        Inflow Source:
+                      </span>
+                      <span className="text-cyan-300 font-bold">
+                        {node.primaryFloodSource}
+                      </span>
+                    </div>
+                  )}
 
                   {/* Early Warning Forecast (if breached) with Live Countdown */}
                   {node.earlyWarning?.breached && (() => {

@@ -88,9 +88,11 @@ export default function ZoneDetails({
               <span className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-bold border ${selectedNode?.classification?.badgeClass ?? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/40'}`}>
                 {selectedNode?.classification?.label ?? 'Residential'}
               </span>
-              <span className="px-2.5 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/50 text-cyan-300 shadow-sm">
-                Primary Inflow Source: {selectedNode.primaryFloodSource || 'Self-Contained'}
-              </span>
+              {selectedNode.primaryFloodSource && selectedNode.primaryFloodSource !== 'Self-Contained' && (
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950/80 border border-cyan-500/50 text-cyan-300 shadow-sm">
+                  Primary Inflow Source: {selectedNode.primaryFloodSource}
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-400 font-mono mt-0.5">
               {selectedNode?.classification?.desc ?? 'Urban sector'}

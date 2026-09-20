@@ -29,6 +29,11 @@ export const useSimulationStore = create((set, get) => ({
   setIntensityMmHr: (intensityMmHr) => set({ intensityMmHr: Number(intensityMmHr) }),
   setDurationHrs: (durationHrs) => set({ durationHrs: Number(durationHrs) }),
   setInitialWaterM: (initialWaterM) => set({ initialWaterM: Number(initialWaterM) }),
+
+  // Clean Baseline Comparison Toggle
+  showBaseline: false,
+  setShowBaseline: (showBaseline) => set({ showBaseline }),
+  toggleShowBaseline: () => set((state) => ({ showBaseline: !state.showBaseline })),
   
   // Disruption preview state (for immediate feedback before running simulation)
   disruptionsPreview: null,
