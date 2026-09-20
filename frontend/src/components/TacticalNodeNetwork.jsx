@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   Shield, AlertTriangle, AlertOctagon, Droplets, Users, 
-  Mountain, Eye, Activity, MapPin, AlertCircle 
+  Mountain, Eye, Activity, MapPin, AlertCircle, Layers 
 } from 'lucide-react';
 
 import { SingleNodeRainCanvas } from './TacticalRainOverlay';
