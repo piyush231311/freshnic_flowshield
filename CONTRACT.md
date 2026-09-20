@@ -142,6 +142,14 @@ scenario = {
 }
 ```
 
+#### 3.2.3. Initial Standing Water Semantics (`"initial_water_m"`)
+
+Unlike precipitation which falls uniformly over the simulation domain, `initial_water_m` is applied **exclusively to low ground and natural drainage corridors**:
+- **Spatial Selection Criterion:** Cells with ground elevation at or below the 20th percentile ($z \le z_{20}$) plus all cells marked in `channel_mask`.
+- **High Ground Behavior:** Cells above the 20th elevation percentile outside river channels remain dry ($h = 0.0\text{ m}$) at $t=0$.
+- **Population Impact at $t=0$:** Applying a critical water depth of $0.5\text{ m}$ ($h_{crit}$) results in **27.38%** (grid 40) / **24.38%** (grid 80) of the city population affected at $t=0$, rather than 100%. This accurately reflects realistic urban topography where antecedent pooling concentrates in riverbeds, retention basins, and low-lying depressions while higher residential ridges remain completely dry.
+- **Default Resolution:** The simulation domain defaults to a `40x40` grid across the backend server, frontend UI, and stress testing matrix.
+
 ---
 
 ### 3.3. Optional Simulation Overrides (`params`)

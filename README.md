@@ -51,8 +51,25 @@ The simulation advances over time horizon $T$ via a finite-difference discretiza
 2. **Gravitational Surface Routing:** Water moves along the hydraulic head gradient $H = z + h$ across 4 cardinal neighbors with a physical conservation limiter and accelerated channel gain along natural waterways.
 3. **Drainage & Infiltration:** Dual-sink extraction accounting for municipal drain intake capacity and soil pervious absorption.
 4. **Dynamic Infrastructure Disruptions:** Real-time scheduling of drainage network failures (pump outages, siltation) and channel blockages (debris dams, culvert collapses).
-5. **Cross-Ward Water Attribution:** Vectorized $16 \times 16$ boundary flux tracking that calculates inter-district flood cascading and identifies primary inflow sources.
-6. **Mass Conservation:** Continuous global conservation verification ensuring relative mass balance error satisfies $\frac{|\text{Mass Error}|}{\sum \text{Rainfall}_{\text{in}}} < 10^{-9}$.
+5. Cross-Ward Water Attribution: Vectorized 16x16 boundary flux tracking that calculates inter-district flood cascading and identifies primary inflow sources.
+6. Mass Conservation: Continuous global conservation verification ensuring relative mass balance error satisfies mass_err / sum(rain_in) < 1e-9.
+
+### Grid Resolution & Grid Dependency
+
+FlowShield defaults to a **40x40 grid** (`grid_size = 40`) everywhere (FastAPI server, React tactical digital twin UI, and stress testing matrix) for instantaneous simulation execution (<1 second) and smooth 60 FPS browser rendering.
+
+> [!NOTE] Hydrodynamic Results are Grid-Dependent
+> Spatial discretization directly influences local elevation gradients, flow accumulation, and channel conveyance. For example, during a storm of **50 mm/hr over 4 h with no events**:
+> - **Grid 40 ($40 \times 40$):** **4,632** people affected.
+> - **Grid 80 ($80 \times 80$):** **22,619** people affected.
+> 
+> Higher resolution grids resolve narrower topographical depressions and local drainage bottlenecks, capturing localized inundation that is averaged over larger cell areas at coarser resolutions.
+
+### Antecedent Standing Water (`initial_water_m`)
+
+To reflect realistic hydrology, `initial_water_m` is applied **only to low ground** (cells at or below the 20th elevation percentile plus river channel cells) rather than uniformly across the whole city:
+- Applying a critical water depth of $0.5\text{ m}$ ($h_{crit}$) results in **27.38%** of people affected at $t=0$ on grid 40 (**24.38%** on grid 80) — clearly below 100%.
+- Higher ground remains completely dry ($h = 0\text{ m}$) at $t=0$.
 
 ---
 

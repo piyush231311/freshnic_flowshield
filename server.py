@@ -75,8 +75,8 @@ class SimulationRequest(BaseModel):
         description="Whether to simulate a 100% blockage on the central drainage canal at t=30min",
     )
     grid_size: int = Field(
-        default=80,
-        description="Spatial grid resolution [N, N]. Default 80x80 ensures instant transfer and smooth browser rendering.",
+        default=40,
+        description="Spatial grid resolution [N, N]. Default 40x40 ensures instant transfer and smooth browser rendering.",
     )
 
 
@@ -552,7 +552,7 @@ def get_early_warning_get(
     initial_water_m: float = 0.0,
     drain_failure: bool = False,
     blockage: bool = False,
-    grid_size: int = 80,
+    grid_size: int = 40,
 ):
     """GET endpoint for ensemble probabilistic early warning."""
     city = get_or_create_city(grid_size)

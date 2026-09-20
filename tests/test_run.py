@@ -228,3 +228,44 @@ def test_stress_matrix_five_scenarios():
     assert abs(extreme["peak_affected"] - 104638) < 100
     assert "+154%" in extreme["deltaPop"]
     assert "backwater" not in extreme["description"].lower()
+
+
+def test_default_grid_size_is_40():
+    from server import SimulationRequest
+    req = SimulationRequest()
+    assert req.grid_size == 40
+
+
+def test_initial_water_low_ground_and_grid_dependency():
+    from server import get_or_create_city, build_scenario
+    from engine.run import run_scenario
+
+    # 1. Initial water 0.5m applied only to low ground (<=20th percentile elevation + channel)
+    city40 = get_or_create_city(40)
+    sc40 = build_scenario(0.0, 4.0, 0.5, False, False, 40)
+    res40 = run_scenario(city40, sc40, intensity_mm_hr=0.0, duration_hrs=4.0, initial_water_m=0.5)
+
+    total_pop40 = float(city40["pop"].sum())
+    t0_aff40 = float(res40["affected_pop"][0])
+    pct40 = (t0_aff40 / total_pop40) * 100.0
+
+    # Must be clearly below 100% (measured at ~27.38%)
+    assert pct40 < 50.0
+    assert abs(pct40 - 27.38) < 2.0
+
+    # Verify high ground cells remain dry at t=0
+    z40 = np.asarray(city40["z"], float)
+    ch40 = np.asarray(city40["channel_mask"], bool)
+    z_thresh40 = float(np.percentile(z40, 20))
+    high_ground = (z40 > z_thresh40) & (~ch40)
+    assert np.all(res40["h"][0][high_ground] == 0.0)
+
+    # 2. Grid dependency: 50 mm/hr x 4 h with no events
+    sc_base40 = build_scenario(50.0, 4.0, 0.0, False, False, 40)
+    res_base40 = run_scenario(city40, sc_base40, intensity_mm_hr=50.0, duration_hrs=4.0, initial_water_m=0.0)
+    assert abs(res_base40["summary"]["peak_affected"] - 4632) < 5
+
+    city80 = get_or_create_city(80)
+    sc_base80 = build_scenario(50.0, 4.0, 0.0, False, False, 80)
+    res_base80 = run_scenario(city80, sc_base80, intensity_mm_hr=50.0, duration_hrs=4.0, initial_water_m=0.0)
+    assert abs(res_base80["summary"]["peak_affected"] - 22619) < 10
