@@ -203,7 +203,7 @@ Designed for instant rendering of KPI cards and dashboard header metrics:
 ### 4.2. Disruption Impact Object (`"impact"`) & Baseline Summary (`"baseline_summary"`)
 
 When infrastructure disruption events (`drain_failure` or `blockage`) are simulated:
-- `"baseline_summary"`: KPI summary dictionary of the **identical storm** (same rainfall intensity, duration, initial water depth, and grid resolution) simulated with disruptions disabled.
+- `"baseline_summary"`: KPI summary dictionary of the **identical storm** (same rainfall intensity, duration, initial water depth, and grid resolution) simulated with disruptions disabled, cached by `(intensity, duration, initial_water, grid)`. Note: the frontend does not consume `baseline_summary` directly, but it is provided in the API response for reference and backwards compatibility.
 - `"impact"`: Additive comparison dictionary isolating the exact incremental damage caused by the disruptions:
   - `"totals"`:
     - `"delta_peak_affected"` (`float`): Additional affected people caused by disruptions ($\text{peak\_affected}_{\text{with}} - \text{peak\_affected}_{\text{without}}$).
@@ -215,7 +215,7 @@ When infrastructure disruption events (`drain_failure` or `blockage`) are simula
   - `"per_ward"`: Array of 16 ward-level comparison objects:
     - `"id"` (`int`): Region index ($0..15$).
     - `"name"` / `"code"` (`str`): e.g. `"Ward 11"` / `"W-11"`.
-    - `"status_with"` / `"status_without"` (`int`): Worst severity status with and without disruptions ($0, 1, 2$).
+    - `"worst_status_with"` / `"worst_status_without"` (aliased as `"status_with"` / `"status_without"`) (`int`): Worst severity status with and without disruptions ($0, 1, 2$).
     - `"max_depth_with"` / `"max_depth_without"` (`float`): Maximum water depth with and without disruptions.
     - `"delta_max_depth"` (`float`): Incremental maximum depth caused by disruptions.
     - `"first_critical_min_with"` / `"first_critical_min_without"` (`float` or `None`): Time to critical breach.

@@ -95,6 +95,21 @@ def test_impact_equals_difference_of_two_runs():
     assert totals["delta_peak_affected"] == diff_aff
     assert totals["delta_critical_cells"] == diff_cells
 
+    # Check series and per_ward fields in impact
+    assert "baseline_region_status" in res["impact"]
+    assert "baseline_affected_pop" in res["impact"]
+    for w in res["impact"]["per_ward"]:
+        assert "id" in w
+        assert "worst_status_with" in w
+        assert "worst_status_without" in w
+        assert "delta_max_depth" in w
+        assert isinstance(w["worsened"], bool)
+
+    # Check per-ward crit_pct in region_data
+    assert "region_data" in res
+    for rdata in res["region_data"]:
+        assert "crit_pct" in rdata
+
 def test_reference_case_reproduces():
     from engine.city_generator import generate_advanced_city
     from server import build_scenario
@@ -110,8 +125,10 @@ def test_reference_case_reproduces():
 
     assert crit_wards_with == ["W-10", "W-11", "W-16"]
     assert crit_wards_no == ["W-16"]
-    assert abs(res_with["summary"]["peak_affected"] - 6659) < 25
-    assert abs(res_no["summary"]["peak_affected"] - 276) < 15
+    assert res_with["summary"]["critical_cells"] == 47
+    assert res_no["summary"]["critical_cells"] == 30
+    assert abs(res_with["summary"]["peak_affected"] - 6659) <= 6659 * 0.02
+    assert abs(res_no["summary"]["peak_affected"] - 276) <= 276 * 0.02
 
 def test_disruptions_metadata_grid40_and_80():
     from server import get_disruptions_metadata

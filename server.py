@@ -285,10 +285,10 @@ def sanitize_for_json(val: Any) -> Any:
         if np.isnan(val) or np.isinf(val):
             return None
         return float(val)
-    elif isinstance(val, (np.integer, int)):
-        return int(val)
     elif isinstance(val, (np.bool_, bool)):
         return bool(val)
+    elif isinstance(val, (np.integer, int)):
+        return int(val)
     return val
 
 
@@ -426,6 +426,8 @@ def simulate(req: SimulationRequest):
                 "id": r,
                 "name": f"Ward {r+1:02d}",
                 "code": f"W-{r+1:02d}",
+                "worst_status_with": s_with,
+                "worst_status_without": s_without,
                 "status_with": s_with,
                 "status_without": s_without,
                 "max_depth_with": round(d_with, 4),
@@ -439,6 +441,8 @@ def simulate(req: SimulationRequest):
         impact = {
             "totals": totals,
             "per_ward": per_ward,
+            "baseline_region_status": baseline_res["region_status"].tolist() if "region_status" in baseline_res else None,
+            "baseline_affected_pop": baseline_res["affected_pop"].tolist() if "affected_pop" in baseline_res else None,
         }
 
     # Global 2D t_crit matrix with None for unbreached cells
