@@ -2,11 +2,12 @@ import React, { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   Shield, AlertTriangle, AlertOctagon, Droplets, Users, 
-  Mountain, Eye, Activity, MapPin 
+  Mountain, Eye, Activity, MapPin, AlertCircle 
 } from 'lucide-react';
 
 import { SingleNodeRainCanvas } from './TacticalRainOverlay';
 import ZoneDetails from './ZoneDetails';
+import { useSimulationStore } from '../store/useSimulationStore';
 
 /**
  * Programmatic Zone Classification based on prompt specification:
@@ -55,6 +56,74 @@ function TacticalNodeNetwork({
 }) {
   // State for React Portal Tooltip: escapes all parent bounding boxes and overflow clipping
   const [portalTooltip, setPortalTooltip] = useState(null);
+
+  // Simulation store selectors for disruption states
+  const disruptionsPreview = useSimulationStore((state) => state.disruptionsPreview);
+  const simData = useSimulationStore((state) => state.simData);
+  const drainFailureToggle = useSimulationStore((state) => state.drainFailure);
+  const blockageToggle = useSimulationStore((state) => state.blockage);
+
+  // 1. Resolve Blockage Disruption State (Simulated truth > Preview armed)
+  const blockageDisruption = useMemo(() => {
+    const simBlock = simData?.disruptions?.find((d) => d.type === 'blockage');
+    const previewBlock = disruptionsPreview?.find((d) => d.type === 'blockage');
+
+    const event = simBlock || previewBlock || (blockageToggle ? {
+      type: 'blockage',
+      label: 'Canal Blockage (W-11)',
+      t_start_min: 30.0,
+      primary_ward_ids: [10],
+      ward_overlap: { 10: 0.14 },
+    } : null);
+
+    if (!event && !blockageToggle) return null;
+
+    const tStart = event?.t_start_min ?? 30.0;
+    const isSimulated = Boolean(simBlock);
+    const isActive = isSimulated && currentTimeMin >= tStart;
+    const isArmed = (blockageToggle || Boolean(previewBlock) || isSimulated) && !isActive;
+
+    return {
+      ...event,
+      primary_ward_ids: event?.primary_ward_ids || [10],
+      isActive,
+      isArmed,
+      tStart,
+    };
+  }, [simData, disruptionsPreview, blockageToggle, currentTimeMin]);
+
+  // 2. Resolve Drain Failure Disruption State (Simulated truth > Preview armed)
+  const drainDisruption = useMemo(() => {
+    const simDrain = simData?.disruptions?.find((d) => d.type === 'drain_failure');
+    const previewDrain = disruptionsPreview?.find((d) => d.type === 'drain_failure');
+
+    const event = simDrain || previewDrain || (drainFailureToggle ? {
+      type: 'drain_failure',
+      label: 'Drain Failure (60% capacity loss)',
+      t_start_min: 60.0,
+      primary_ward_ids: [9, 10, 13, 14],
+      ward_overlap: { 9: 0.8, 10: 0.8, 13: 0.4, 14: 0.4, 8: 0.16, 11: 0.16, 12: 0.08, 15: 0.08 },
+    } : null);
+
+    if (!event && !drainFailureToggle) return null;
+
+    const tStart = event?.t_start_min ?? 60.0;
+    const isSimulated = Boolean(simDrain);
+    const isActive = isSimulated && currentTimeMin >= tStart;
+    const isArmed = (drainFailureToggle || Boolean(previewDrain) || isSimulated) && !isActive;
+
+    return {
+      ...event,
+      primary_ward_ids: event?.primary_ward_ids || [9, 10, 13, 14],
+      ward_overlap: event?.ward_overlap || { 9: 0.8, 10: 0.8, 13: 0.4, 14: 0.4, 8: 0.16, 11: 0.16, 12: 0.08, 15: 0.08 },
+      isActive,
+      isArmed,
+      tStart,
+    };
+  }, [simData, disruptionsPreview, drainFailureToggle, currentTimeMin]);
+
+  const blockagePrimarySet = useMemo(() => new Set(blockageDisruption?.primary_ward_ids || []), [blockageDisruption]);
+  const drainPrimarySet = useMemo(() => new Set(drainDisruption?.primary_ward_ids || []), [drainDisruption]);
 
   // Grid dimensions for 4x4 wards (coordinates in SVG space: 0..800 x 0..600)
   const cols = 4;
@@ -276,19 +345,40 @@ function TacticalNodeNetwork({
             </p>
           </div>
 
-          {/* Legend */}
-          <div className="flex items-center space-x-3 text-xs font-mono">
-            <div className="flex items-center space-x-1.5">
-              <span className="w-3 h-3 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
-              <span className="text-slate-300">SAFE</span>
+          {/* Legend: Ward Status & Flow/Disruption Semantics */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs font-mono">
+            {/* Ward Status */}
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+                <span className="text-slate-300">SAFE</span>
+              </div>
+              <div className="flex items-center space-x-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_#f59e0b]"></span>
+                <span className="text-slate-300">WARN</span>
+              </div>
+              <div className="flex items-center space-x-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_10px_#ef4444]"></span>
+                <span className="text-slate-300">CRIT</span>
+              </div>
             </div>
-            <div className="flex items-center space-x-1.5">
-              <span className="w-3 h-3 rounded-full bg-amber-500 shadow-[0_0_8px_#f59e0b]"></span>
-              <span className="text-slate-300">WARNING</span>
-            </div>
-            <div className="flex items-center space-x-1.5">
-              <span className="w-3 h-3 rounded-full bg-red-500 shadow-[0_0_10px_#ef4444]"></span>
-              <span className="text-slate-300">CRITICAL</span>
+
+            <span className="text-slate-700 hidden sm:inline">|</span>
+
+            {/* Flow & Disruption Legend */}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center space-x-1.5">
+                <span className="w-4 h-0.5 bg-cyan-400 rounded-full inline-block shadow-[0_0_6px_#22d3ee]"></span>
+                <span className="text-slate-300">normal flow</span>
+              </div>
+              <div className="flex items-center space-x-1.5">
+                <span className="w-4 h-0 border-b-2 border-dotted border-red-400 inline-block"></span>
+                <span className="text-slate-300">restricted flow</span>
+              </div>
+              <div className="flex items-center space-x-1.5">
+                <span className="px-1.5 py-0.5 rounded bg-red-950/80 border border-red-500 text-red-300 text-[10px] font-bold">drains -60%</span>
+                <span className="text-slate-300">drain failure</span>
+              </div>
             </div>
           </div>
         </div>
@@ -409,43 +499,78 @@ function TacticalNodeNetwork({
 
                   const pathString = `M ${sx.toFixed(1)} ${sy.toFixed(1)} C ${cx1.toFixed(1)} ${cy1.toFixed(1)}, ${cx2.toFixed(1)} ${cy2.toFixed(1)}, ${ex.toFixed(1)} ${ey.toFixed(1)}`;
 
+                  // Check if this edge touches the primary wards of an active canal blockage
+                  // Blockage Active (t >= t_start_min): edges touching primary wards turn red #f87171, dotted (dasharray "6 12"), animate at least 3x slower (min 6s)
+                  const isBlockageActive = Boolean(blockageDisruption?.isActive);
+                  const touchesBlockage = isBlockageActive && (blockagePrimarySet.has(edge.from) || blockagePrimarySet.has(edge.to));
+
+                  // Do NOT recolour arrows for drain failure: the model reduces the drainage sink, not lateral flow.
+
+                  // Midpoint of the cubic Bezier curve at t = 0.5
+                  const midX = 0.125 * (sx + ex) + 0.375 * (cx1 + cx2);
+                  const midY = 0.125 * (sy + ey) + 0.375 * (cy1 + cy2);
+
+                  const edgeStroke = touchesBlockage ? '#f87171' : '#22d3ee';
+                  const edgeDash = touchesBlockage ? '6 12' : '40 60';
+                  const edgeDur = touchesBlockage ? Math.max(6.0, animationDuration * 3) : animationDuration;
+                  const edgeTravel = touchesBlockage ? '72' : '100';
+
                   return (
                     <g key={edge.key}>
                       {/* Task 3: Background Conduit Bed - Static, subtle slate pipe */}
                       <path
                         d={pathString}
-                        stroke="#0e3a4e"
+                        stroke={touchesBlockage ? '#7f1d1d' : '#0e3a4e'}
                         strokeWidth={2}
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         fill="none"
-                        opacity={0.3}
+                        opacity={touchesBlockage ? 0.6 : 0.3}
                       />
 
-                      {/* Task 1 & 2: Foreground Flowing Stream - Mathematically synced pulse travel */}
-                      {!isDormant && (
+                      {/* Foreground Flowing Stream - Red dotted & 3x slower for Blockage Active, Solid Cyan for normal flow */}
+                      {(!isDormant || touchesBlockage) && (
                         <path
                           d={pathString}
-                          stroke="#22d3ee"
-                          strokeWidth={dynamicWidth}
-                          strokeDasharray="40 60"
+                          stroke={edgeStroke}
+                          strokeWidth={touchesBlockage ? Math.max(3.0, dynamicWidth) : dynamicWidth}
+                          strokeDasharray={edgeDash}
                           strokeLinecap="round"
                           strokeLinejoin="round"
                           fill="none"
-                          opacity={Math.min(1.0, 0.85 + effectiveVolume * 0.1)}
+                          opacity={touchesBlockage ? 0.95 : Math.min(1.0, 0.85 + effectiveVolume * 0.1)}
                           style={{
-                            filter: 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.4))',
+                            filter: touchesBlockage
+                              ? 'drop-shadow(0 0 6px rgba(248, 113, 113, 0.6))'
+                              : 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.4))',
                           }}
                         >
                           <animate
                             attributeName="stroke-dashoffset"
-                            from={isReverse ? "0" : "100"}
-                            to={isReverse ? "100" : "0"}
-                            dur={`${animationDuration.toFixed(2)}s`}
+                            from={isReverse ? "0" : edgeTravel}
+                            to={isReverse ? edgeTravel : "0"}
+                            dur={`${edgeDur.toFixed(2)}s`}
                             repeatCount="indefinite"
                             calcMode="linear"
                           />
                         </path>
+                      )}
+
+                      {/* Small icon at the edge midpoint for active blockage */}
+                      {touchesBlockage && (
+                        <g transform={`translate(${midX.toFixed(1)}, ${midY.toFixed(1)})`} className="pointer-events-none select-none">
+                          <circle
+                            r="9"
+                            fill="#0f172a"
+                            stroke="#f87171"
+                            strokeWidth="1.5"
+                            style={{ filter: 'drop-shadow(0 0 6px rgba(248, 113, 113, 0.7))' }}
+                          />
+                          {/* Mini Hazard Octagon Icon */}
+                          <polygon points="-2.2,-5 2.2,-5 5,-2.2 5,2.2 2.2,5 -2.2,5 -5,2.2 -5,-2.2" fill="#ef4444" />
+                          <line x1="0" y1="-2.5" x2="0" y2="0.5" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" />
+                          <circle cx="0" cy="2.5" r="0.7" fill="#ffffff" />
+                        </g>
                       )}
                     </g>
                   );
@@ -459,6 +584,21 @@ function TacticalNodeNetwork({
               const cfg = STATUS_CONFIG[node.status] || STATUS_CONFIG[0];
               const isCrit = node.status === 2;
               const isWarn = node.status === 1;
+
+              // Disruption Armed & Active States for this Ward
+              const isBlockageArmed = Boolean(blockageDisruption?.isArmed && blockagePrimarySet.has(node.id));
+              const isDrainArmed = Boolean(drainDisruption?.isArmed && drainPrimarySet.has(node.id));
+              const isArmed = isBlockageArmed || isDrainArmed;
+
+              // Drain failure Active
+              const isDrainActive = Boolean(drainDisruption?.isActive);
+              const isDrainPrimary = isDrainActive && drainPrimarySet.has(node.id);
+              const drainOverlap = Number(drainDisruption?.ward_overlap?.[node.id] ?? drainDisruption?.ward_overlap?.[String(node.id)] ?? 0);
+              const isDrainPartial = isDrainActive && !isDrainPrimary && drainOverlap > 0;
+              const partialLossPct = Math.round(drainOverlap * 60);
+
+              // Blockage Active
+              const isBlockageActiveWard = Boolean(blockageDisruption?.isActive && blockagePrimarySet.has(node.id));
 
               return (
                 /* The Parent Node Wrapper: Relative, cursor-pointer, onMouseEnter/Leave handles Portal positioning */
@@ -479,6 +619,16 @@ function TacticalNodeNetwork({
                   )}
                   {isWarn && (
                     <div className="absolute -inset-2 rounded-full border border-amber-500 animate-radar pointer-events-none opacity-60" />
+                  )}
+
+                  {/* 1. Armed Primary Wards: Dashed Outline */}
+                  {isArmed && (
+                    <div className="absolute -inset-2 rounded-full border-2 border-dashed border-amber-400 animate-pulse pointer-events-none z-10" />
+                  )}
+
+                  {/* 3. Drain Failure Active Primary Wards: Red Dotted Outline */}
+                  {isDrainPrimary && (
+                    <div className="absolute -inset-2 rounded-full border-2 border-dotted border-red-500 pointer-events-none animate-pulse z-10" />
                   )}
 
                   {/* Node Circular Face */}
@@ -507,6 +657,45 @@ function TacticalNodeNetwork({
                     />
 
                   </div>
+
+                  {/* 1. Armed Primary Wards: Icon Badge */}
+                  {isArmed && (
+                    <div
+                      className="absolute -top-2.5 -right-2.5 bg-amber-500 text-slate-950 p-1 rounded-full shadow-lg z-30 flex items-center justify-center font-bold"
+                      title={isBlockageArmed ? "Canal Blockage Armed" : "Drain Failure Armed"}
+                    >
+                      {isBlockageArmed ? (
+                        <AlertCircle className="w-3.5 h-3.5 text-slate-950 stroke-[2.5]" />
+                      ) : (
+                        <AlertTriangle className="w-3.5 h-3.5 text-slate-950 stroke-[2.5]" />
+                      )}
+                    </div>
+                  )}
+
+                  {/* 2. Blockage Active Ward: Active Octagon Icon Badge */}
+                  {isBlockageActiveWard && (
+                    <div
+                      className="absolute -top-2.5 -right-2.5 bg-red-600 text-white p-1 rounded-full shadow-lg z-30 flex items-center justify-center font-bold"
+                      title="Canal Blocked"
+                    >
+                      <AlertOctagon className="w-3.5 h-3.5 text-white stroke-[2.5]" />
+                    </div>
+                  )}
+
+                  {/* 3. Drain Failure Active: Primary Ward Badge ("drains -60%") */}
+                  {isDrainPrimary && (
+                    <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-red-950/95 border border-red-500 text-red-300 font-mono text-[9px] font-bold tracking-tight whitespace-nowrap shadow-md z-30 flex items-center gap-1">
+                      <Droplets className="w-2.5 h-2.5 text-red-400" />
+                      <span>drains -60%</span>
+                    </div>
+                  )}
+
+                  {/* 3. Drain Failure Active: Partial Ward Lighter Badge */}
+                  {isDrainPartial && (
+                    <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded bg-slate-900/90 border border-amber-500/50 text-amber-300/90 font-mono text-[8px] font-semibold tracking-tight whitespace-nowrap shadow-md z-30 flex items-center gap-0.5">
+                      <span>drains -{partialLossPct}%</span>
+                    </div>
+                  )}
 
                   {/* Canvas Rain Animation Layer: strictly inner circular mask */}
                   <div className="absolute inset-0 rounded-full overflow-hidden pointer-events-none">
