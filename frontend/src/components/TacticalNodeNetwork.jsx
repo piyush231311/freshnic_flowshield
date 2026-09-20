@@ -451,6 +451,10 @@ function TacticalNodeNetwork({
                 <span className="text-slate-300">restricted flow</span>
               </div>
               <div className="flex items-center space-x-1.5">
+                <span className="w-2.5 h-2.5 rounded-full border-2 border-dashed border-emerald-400 inline-block"></span>
+                <span className="text-emerald-300 font-bold">absorbing</span>
+              </div>
+              <div className="flex items-center space-x-1.5">
                 <span className="px-1.5 py-0.5 rounded bg-red-950/80 border border-red-500 text-red-300 text-[10px] font-bold">drains -60%</span>
                 <span className="text-slate-300">drain failure</span>
               </div>
@@ -746,6 +750,14 @@ function TacticalNodeNetwork({
               const wardImpact = simData?.impact?.per_ward?.find((w) => w.id === node.id);
               const isWorsened = Boolean(wardImpact?.worsened);
 
+              // Task 1: Check if ward has active soil infiltration occurring
+              const stormIntensity = Number(
+                simData?.rain_mmhr?.[Math.max(0, Math.min(currentStep, (simData?.rain_mmhr?.length || 1) - 1))] ??
+                useSimulationStore.getState().intensity ??
+                0
+              );
+              const isAbsorbing = ((node.depth || 0) < 0.01) && (((node.cumulativeAbsorbedM3 || 0) > 0) || stormIntensity > 0);
+
               // Accessibility: Descriptive aria-label (e.g. "Ward 11, Critical, canal blocked, drains impaired, worsened by disruption")
               const statusCapitalized = cfg.label.charAt(0).toUpperCase() + cfg.label.slice(1).toLowerCase();
               const disruptionParts = [];
@@ -763,6 +775,9 @@ function TacticalNodeNetwork({
               }
               if (isWorsened && !showBaseline) {
                 disruptionParts.push('worsened by disruption');
+              }
+              if (isAbsorbing) {
+                disruptionParts.push('active soil infiltration (permeable)');
               }
               const disruptionStr = disruptionParts.length > 0 ? `, ${disruptionParts.join(', ')}` : '';
               const wardAriaLabel = `Ward ${node.id + 1}, ${statusCapitalized}${disruptionStr}`;
@@ -807,6 +822,19 @@ function TacticalNodeNetwork({
                     <div className="absolute -inset-2 rounded-full border-2 border-dotted border-red-500 pointer-events-none animate-pulse z-10" />
                   )}
 
+                  {/* Active Soil Infiltration Indicator (Pulsating Emerald Inner Ring / Aura) */}
+                  {isAbsorbing && !isCrit && !isWarn && !isArmed && (
+                    <div
+                      className="absolute -inset-2 rounded-full border-2 border-dashed pointer-events-none z-10 animate-pulse"
+                      style={{
+                        borderColor: '#10b981',
+                        animationDuration: '3s',
+                        boxShadow: '0 0 14px rgba(16, 185, 129, 0.45)',
+                      }}
+                      title="Active Soil Infiltration: 100% of precipitation absorbed"
+                    />
+                  )}
+
                   {/* Node Circular Face */}
                   <div
                     className={`w-full h-full rounded-full flex flex-col items-center justify-center border-2 transition-all shadow-lg ${
@@ -815,7 +843,7 @@ function TacticalNodeNetwork({
                     style={{
                       backgroundColor: '#0f172a',
                       borderColor: cfg.color,
-                      boxShadow: `0 0 12px ${cfg.ringColor}`,
+                      boxShadow: isAbsorbing ? '0 0 14px rgba(16, 185, 129, 0.45)' : `0 0 12px ${cfg.ringColor}`,
                     }}
                   >
                     <span className="font-mono text-[10px] font-bold text-white leading-tight">
@@ -827,9 +855,16 @@ function TacticalNodeNetwork({
                     >
                       {(node.depth ?? 0).toFixed(2)}m | max {(node.maxDepth ?? node.peakDepth ?? 0).toFixed(2)}m
                     </span>
-                    <span className="font-mono text-[8px] font-extrabold text-slate-300 leading-tight">
-                      {((node.critPct ?? 0) * 100).toFixed(0)}% crit
-                    </span>
+                    {isAbsorbing ? (
+                      <span className="font-mono text-[8px] font-extrabold text-emerald-400 leading-tight flex items-center gap-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
+                        absorbing
+                      </span>
+                    ) : (
+                      <span className="font-mono text-[8px] font-extrabold text-slate-300 leading-tight">
+                        {((node.critPct ?? 0) * 100).toFixed(0)}% crit
+                      </span>
+                    )}
                   </div>
 
                   {/* 1. Armed Primary Wards: Icon Badge */}
@@ -1039,6 +1074,14 @@ function TacticalNodeNetwork({
                       <span className="text-cyan-300 font-bold">
                         {node.primaryFloodSource} ({node.primaryInflowVolume.toFixed(1)} m³)
                       </span>
+                    </div>
+                  )}
+
+                  {/* Active Soil Infiltration Indicator in Tooltip */}
+                  {Boolean(((node.depth || 0) < 0.01) && (((node.cumulativeAbsorbedM3 || 0) > 0) || stormIntensity > 0)) && (
+                    <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 font-bold text-[10px] mt-2">
+                      <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span>Active Infiltration: Permeable Soil</span>
                     </div>
                   )}
 

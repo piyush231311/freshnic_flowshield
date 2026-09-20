@@ -47,6 +47,13 @@ export default function ZoneDetails({
     : null;
   const isBreachedNow = timeRemaining === 0 || selectedNode?.status === 2;
 
+  // Simulation store selectors for disruption impact comparisons
+  const simData = useSimulationStore((state) => state.simData);
+  const disruptionsPreview = useSimulationStore((state) => state.disruptionsPreview);
+  const drainFailureToggle = useSimulationStore((state) => state.drainFailure);
+  const blockageToggle = useSimulationStore((state) => state.blockage);
+  const showBaseline = useSimulationStore((state) => state.showBaseline);
+
   // Safe soil metrics with resilient fallback operators
   const selectedWardId = selectedNode?.id ?? 0;
   const activeFrameWard = currentTimelineFrame?.zones?.[selectedWardId]
@@ -60,24 +67,26 @@ export default function ZoneDetails({
   const soilType = activeFrameWard?.soil_type ?? activeFrameWard?.soilType ?? selectedNode?.soilType ?? selectedNode?.soil_type ?? 'Sandy Loam';
   const maxStorageMm = soilType === 'Impervious Concrete' ? 15.0 : 120.0;
 
-  // Real-time dynamic fallback if backend frame keys are 0:
+  // Real-time dynamic soil metrics:
   let dynamicSatPct = Number(activeFrameWard?.soil_saturation_pct ?? activeFrameWard?.soilSaturationPct ?? selectedNode?.soilSaturationPct ?? selectedNode?.soil_saturation_pct) || 0;
   let dynamicAbsorbedM3 = Number(activeFrameWard?.cumulative_absorbed_m3 ?? activeFrameWard?.cumulativeAbsorbedM3 ?? selectedNode?.cumulativeAbsorbedM3 ?? selectedNode?.cumulative_absorbed_m3) || 0;
 
-  if (dynamicSatPct === 0 && currentMinute > 0 && currentDepth > 0) {
-    const elapsedHours = currentMinute / 60;
-    const depthAbsorbedMm = Math.min(maxStorageMm, infilRateMmHr * elapsedHours * 0.85);
-    dynamicSatPct = Math.min(100, Math.round((depthAbsorbedMm / maxStorageMm) * 1000) / 10);
-    // Approximate ward cell area: 100m x 100m * 100 cells
-    dynamicAbsorbedM3 = Math.round(depthAbsorbedMm * 125);
-  }
+  const isUnflooded = currentDepth < 0.01;
 
-  // Simulation store selectors for disruption impact comparisons
-  const simData = useSimulationStore((state) => state.simData);
-  const disruptionsPreview = useSimulationStore((state) => state.disruptionsPreview);
-  const drainFailureToggle = useSimulationStore((state) => state.drainFailure);
-  const blockageToggle = useSimulationStore((state) => state.blockage);
-  const showBaseline = useSimulationStore((state) => state.showBaseline);
+  if ((dynamicAbsorbedM3 === 0 || dynamicSatPct === 0) && currentMinute > 0) {
+    const elapsedHours = currentMinute / 60;
+    const stormIntensityMmHr = Number(simData?.rain_mmhr?.[Math.round(currentMinute / 5)] ?? 50.0);
+    const rainFallenMm = stormIntensityMmHr * elapsedHours;
+    const depthAbsorbedMm = Math.min(maxStorageMm, Math.min(infilRateMmHr * elapsedHours, rainFallenMm));
+    if (dynamicSatPct === 0) {
+      dynamicSatPct = Math.min(100, Math.round((depthAbsorbedMm / maxStorageMm) * 1000) / 10);
+    }
+    if (dynamicAbsorbedM3 === 0) {
+      const cellCount = Number(selectedNode?.cell_count || 100);
+      const wardAreaM2 = cellCount * 100;
+      dynamicAbsorbedM3 = Math.round((depthAbsorbedMm / 1000.0) * wardAreaM2);
+    }
+  }
 
   // Identify disruption events (simulated truth > preview > toggles)
   const simDrain = simData?.disruptions?.find((d) => d.type === 'drain_failure');
@@ -363,6 +372,13 @@ export default function ZoneDetails({
               {soilType}
             </span>
           </div>
+
+          {isUnflooded && (
+            <div className="mt-2 px-2 py-1.5 rounded-lg bg-emerald-950/90 border border-emerald-500/70 flex items-center gap-1.5 text-emerald-300 font-mono text-[9px] font-bold shadow-md">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
+              <span>STATUS: ACTIVE INFILTRATION — 100% OF PRECIPITATION RETAINED IN SOIL</span>
+            </div>
+          )}
 
           <div className="text-[10px] font-mono text-slate-400 border-t border-slate-800/80 pt-1 mt-1 flex justify-between">
             <span>Permeability:</span>
