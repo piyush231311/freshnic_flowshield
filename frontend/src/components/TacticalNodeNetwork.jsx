@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   Shield, AlertTriangle, AlertOctagon, Droplets, Users, 
@@ -124,6 +124,55 @@ function TacticalNodeNetwork({
 
   const blockagePrimarySet = useMemo(() => new Set(blockageDisruption?.primary_ward_ids || []), [blockageDisruption]);
   const drainPrimarySet = useMemo(() => new Set(drainDisruption?.primary_ward_ids || []), [drainDisruption]);
+
+  // Accessibility: Detect prefers-reduced-motion
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const handleChange = () => setPrefersReducedMotion(mediaQuery.matches);
+    mediaQuery.addEventListener?.('change', handleChange);
+    return () => mediaQuery.removeEventListener?.('change', handleChange);
+  }, []);
+
+  // Accessibility: aria-live="polite" announcement on timeline crossing start times
+  const [liveAnnouncement, setLiveAnnouncement] = useState('');
+  const prevTimeMinRef = useRef(currentTimeMin);
+
+  useEffect(() => {
+    const prevTime = prevTimeMinRef.current;
+    prevTimeMinRef.current = currentTimeMin;
+
+    // Announce when playback crosses Canal Blockage start time
+    if (
+      blockageDisruption?.isActive &&
+      prevTime < blockageDisruption.tStart &&
+      currentTimeMin >= blockageDisruption.tStart
+    ) {
+      const wards = (blockageDisruption.primary_ward_ids || [10])
+        .map((id) => `Ward ${id + 1}`)
+        .join(', ');
+      setLiveAnnouncement(`Canal blockage begins at T+${Math.round(blockageDisruption.tStart)} min in ${wards}`);
+    }
+
+    // Announce when playback crosses Drain Failure start time
+    if (
+      drainDisruption?.isActive &&
+      prevTime < drainDisruption.tStart &&
+      currentTimeMin >= drainDisruption.tStart
+    ) {
+      const wards = (drainDisruption.primary_ward_ids || [9, 10, 13, 14])
+        .map((id) => `Ward ${id + 1}`)
+        .join(', ');
+      setLiveAnnouncement(`Drain failure begins at T+${Math.round(drainDisruption.tStart)} min in ${wards}`);
+    }
+  }, [currentTimeMin, blockageDisruption, drainDisruption]);
 
   // Grid dimensions for 4x4 wards (coordinates in SVG space: 0..800 x 0..600)
   const cols = 4;
@@ -331,6 +380,16 @@ function TacticalNodeNetwork({
       {/* 1. TOP SCHEMATIC MAP CONTAINER */}
       <div className="relative w-full bg-slate-900/90 rounded-2xl border border-teal-500/30 shadow-2xl p-4 sm:p-6 tactical-grid-bg">
         
+        {/* Accessibility: Screen reader live announcement for timeline crossings */}
+        <div
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {liveAnnouncement}
+        </div>
+
         {/* HUD Header Banner */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
           <div>
@@ -512,11 +571,23 @@ function TacticalNodeNetwork({
 
                   const edgeStroke = touchesBlockage ? '#f87171' : '#22d3ee';
                   const edgeDash = touchesBlockage ? '6 12' : '40 60';
+                  // Under prefers-reduced-motion: reduce, remove the SMIL animation and use static dotted styling
+                  const activeDash = prefersReducedMotion
+                    ? (touchesBlockage ? '6 12' : '8 8')
+                    : edgeDash;
                   const edgeDur = touchesBlockage ? Math.max(6.0, animationDuration * 3) : animationDuration;
                   const edgeTravel = touchesBlockage ? '72' : '100';
 
+                  const pathTitle = touchesBlockage
+                    ? `Flow between Ward ${edge.from + 1} and Ward ${edge.to + 1}: restricted by canal blockage`
+                    : isDormant
+                    ? `Flow between Ward ${edge.from + 1} and Ward ${edge.to + 1}: dormant flow`
+                    : `Flow between Ward ${edge.from + 1} and Ward ${edge.to + 1}: normal flow`;
+
                   return (
                     <g key={edge.key}>
+                      <title>{pathTitle}</title>
+
                       {/* Task 3: Background Conduit Bed - Static, subtle slate pipe */}
                       <path
                         d={pathString}
@@ -526,7 +597,9 @@ function TacticalNodeNetwork({
                         strokeLinejoin="round"
                         fill="none"
                         opacity={touchesBlockage ? 0.6 : 0.3}
-                      />
+                      >
+                        <title>{pathTitle}</title>
+                      </path>
 
                       {/* Foreground Flowing Stream - Red dotted & 3x slower for Blockage Active, Solid Cyan for normal flow */}
                       {(!isDormant || touchesBlockage) && (
@@ -534,7 +607,7 @@ function TacticalNodeNetwork({
                           d={pathString}
                           stroke={edgeStroke}
                           strokeWidth={touchesBlockage ? Math.max(3.0, dynamicWidth) : dynamicWidth}
-                          strokeDasharray={edgeDash}
+                          strokeDasharray={activeDash}
                           strokeLinecap="round"
                           strokeLinejoin="round"
                           fill="none"
@@ -545,14 +618,18 @@ function TacticalNodeNetwork({
                               : 'drop-shadow(0 0 6px rgba(34, 211, 238, 0.4))',
                           }}
                         >
-                          <animate
-                            attributeName="stroke-dashoffset"
-                            from={isReverse ? "0" : edgeTravel}
-                            to={isReverse ? edgeTravel : "0"}
-                            dur={`${edgeDur.toFixed(2)}s`}
-                            repeatCount="indefinite"
-                            calcMode="linear"
-                          />
+                          <title>{pathTitle}</title>
+                          {/* Accessibility: Omit SMIL animation under prefers-reduced-motion */}
+                          {!prefersReducedMotion && (
+                            <animate
+                              attributeName="stroke-dashoffset"
+                              from={isReverse ? "0" : edgeTravel}
+                              to={isReverse ? edgeTravel : "0"}
+                              dur={`${edgeDur.toFixed(2)}s`}
+                              repeatCount="indefinite"
+                              calcMode="linear"
+                            />
+                          )}
                         </path>
                       )}
 
@@ -600,16 +677,43 @@ function TacticalNodeNetwork({
               // Blockage Active
               const isBlockageActiveWard = Boolean(blockageDisruption?.isActive && blockagePrimarySet.has(node.id));
 
+              // Accessibility: Descriptive aria-label (e.g. "Ward 11, Critical, canal blocked, drains impaired")
+              const statusCapitalized = cfg.label.charAt(0).toUpperCase() + cfg.label.slice(1).toLowerCase();
+              const disruptionParts = [];
+              if (isBlockageActiveWard) {
+                disruptionParts.push('canal blocked');
+              } else if (isBlockageArmed) {
+                disruptionParts.push('canal blockage armed');
+              }
+              if (isDrainPrimary) {
+                disruptionParts.push('drains impaired');
+              } else if (isDrainPartial) {
+                disruptionParts.push(`drains partially impaired (-${partialLossPct}%)`);
+              } else if (isDrainArmed) {
+                disruptionParts.push('drain failure armed');
+              }
+              const disruptionStr = disruptionParts.length > 0 ? `, ${disruptionParts.join(', ')}` : '';
+              const wardAriaLabel = `Ward ${node.id + 1}, ${statusCapitalized}${disruptionStr}`;
+
               return (
-                /* The Parent Node Wrapper: Relative, cursor-pointer, onMouseEnter/Leave handles Portal positioning */
+                /* The Parent Node Wrapper: Accessible button with tabIndex 0, visible focus ring, and keyboard activation */
                 <div
                   key={node.id}
-                  className="absolute -translate-x-1/2 -translate-y-1/2 w-16 h-16 cursor-pointer transition-transform duration-150 hover:scale-110 z-20"
+                  tabIndex={0}
+                  role="button"
+                  aria-label={wardAriaLabel}
+                  className="absolute -translate-x-1/2 -translate-y-1/2 w-16 h-16 cursor-pointer transition-transform duration-150 hover:scale-110 z-20 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                   style={{
                     left: `${(node.x / width) * 100}%`,
                     top: `${(node.y / height) * 100}%`,
                   }}
                   onClick={() => onSelectWard && onSelectWard(node.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onSelectWard && onSelectWard(node.id);
+                    }
+                  }}
                   onMouseEnter={(e) => handleMouseEnter(node, e)}
                   onMouseLeave={handleMouseLeave}
                 >
@@ -697,9 +801,9 @@ function TacticalNodeNetwork({
                     </div>
                   )}
 
-                  {/* Canvas Rain Animation Layer: strictly inner circular mask */}
+                  {/* Canvas Rain Animation Layer: strictly inner circular mask (disabled under prefers-reduced-motion) */}
                   <div className="absolute inset-0 rounded-full overflow-hidden pointer-events-none">
-                    <SingleNodeRainCanvas status={node.status} />
+                    {!prefersReducedMotion && <SingleNodeRainCanvas status={node.status} />}
                   </div>
                 </div>
               );

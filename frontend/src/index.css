@@ -166,3 +166,22 @@ input[type="range"] {
   }
 }
 
+/* Accessibility: WCAG prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-radar,
+  .animate-pulse,
+  .animate-ping,
+  .animate-water-flow,
+  .animate-conduit,
+  .animate-fluid-flow,
+  .animate-river-drift {
+    animation: none !important;
+  }
+}
+

@@ -199,8 +199,9 @@ function TacticalPlaybackBar({
             {/* Reset */}
             <button
               onClick={onReset}
-              className="p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer"
+              className="p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-400"
               title="Reset to T+000"
+              aria-label="Reset simulation playback to T+000"
             >
               <RotateCcw className="w-4 h-4" />
             </button>
@@ -208,7 +209,8 @@ function TacticalPlaybackBar({
             {/* Play / Pause */}
             <button
               onClick={() => setIsPlaying(!isPlaying)}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-mono font-bold text-xs tracking-wider transition cursor-pointer ${
+              aria-label={isPlaying ? "Pause simulation playback" : "Start simulation playback"}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-mono font-bold text-xs tracking-wider transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-400 ${
                 isPlaying
                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.25)]'
                   : 'bg-teal-500/20 text-teal-300 border border-teal-500/50 hover:bg-teal-500/30 shadow-[0_0_15px_rgba(20,184,166,0.25)]'
@@ -228,12 +230,14 @@ function TacticalPlaybackBar({
             </button>
 
             {/* Speed Multipliers */}
-            <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800">
+            <div className="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800" role="group" aria-label="Playback speed multipliers">
               {speeds.map((s) => (
                 <button
                   key={s}
                   onClick={() => setPlaybackSpeed(s)}
-                  className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition cursor-pointer ${
+                  aria-label={`${s}x playback speed`}
+                  aria-pressed={playbackSpeed === s}
+                  className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-teal-400 ${
                     playbackSpeed === s
                       ? 'bg-teal-500 text-slate-950 shadow-[0_0_8px_#14b8a6]'
                       : 'text-slate-400 hover:text-slate-200'
@@ -254,8 +258,13 @@ function TacticalPlaybackBar({
                 min={0}
                 max={Math.max(0, totalSteps - 1)}
                 value={currentStep}
+                aria-label="Simulation timeline scrubber in minutes"
+                aria-valuemin={0}
+                aria-valuemax={Math.max(0, totalSteps - 1)}
+                aria-valuenow={currentStep}
+                aria-valuetext={`T+${Math.round(currentTimeMin)} minutes`}
                 onChange={(e) => onStepChange(parseInt(e.target.value, 10))}
-                className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer border border-slate-800 focus:outline-none focus:ring-1 focus:ring-teal-400 accent-teal-400"
+                className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer border border-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-400 accent-teal-400"
               />
               {/* Event markers on timeline */}
               <div 
