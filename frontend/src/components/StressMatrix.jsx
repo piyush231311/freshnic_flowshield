@@ -8,11 +8,11 @@ import {
  * StressMatrix
  * Tab 3: Multi-scenario comparative stress matrix.
  * Displays preset operational runs:
- * 1. Normal Rainfall (Baseline)
- * 2. Moderate Monsoon (Canal Blockage)
- * 3. Heavy Monsoon (Urban Core Drain Failure)
- * 4. Extreme Flashburst
- * 5. Compound Catastrophe
+ * 1. Normal Rainfall (15 mm/hr, 4 h, no events)
+ * 2. Heavy Rainfall (50 mm/hr, 4 h, no events)
+ * 3. Heavy + Drain Failure (50 mm/hr, 4 h, drain failure)
+ * 4. Heavy + Canal Blockage (50 mm/hr, 4 h, canal blockage)
+ * 5. Extreme Compound (75 mm/hr, 4 h, drain failure + blockage)
  * Displays 'Peak Inundation Level' and 'Peak Population at Risk' for each.
  */
 export default function StressMatrix({

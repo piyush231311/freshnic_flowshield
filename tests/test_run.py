@@ -166,3 +166,65 @@ def test_disruptions_metadata_grid40_and_80():
         assert abs(get_ov(11) - 0.16) < 0.05
         assert abs(get_ov(12) - 0.08) < 0.05
         assert abs(get_ov(15) - 0.08) < 0.05
+
+
+def test_stress_matrix_five_scenarios():
+    from server import get_stress_matrix
+
+    res = get_stress_matrix()
+    scenarios = res["scenarios"]
+    assert len(scenarios) == 5
+
+    # 1. Normal (15 mm/hr, 4 h, no events)
+    normal = scenarios[0]
+    assert normal["intensity_mm_hr"] == 15.0
+    assert normal["duration_hrs"] == 4.0
+    assert normal["peak_affected"] == 0.0
+    assert normal["deltaDepth"] == "Ref"
+    assert normal["deltaPop"] == "Ref"
+    assert "backwater" not in normal["description"].lower()
+    assert "0 people affected" in normal["description"]
+
+    # 2. Heavy Base (50 mm/hr, 4 h, no events)
+    heavy_base = scenarios[1]
+    assert heavy_base["intensity_mm_hr"] == 50.0
+    assert heavy_base["duration_hrs"] == 4.0
+    assert heavy_base["drain_failure"] is False
+    assert heavy_base["blockage"] is False
+    assert abs(heavy_base["peak_affected"] - 4632) < 5
+    assert heavy_base["deltaDepth"] == "Ref"
+    assert heavy_base["deltaPop"] == "Ref"
+    assert "backwater" not in heavy_base["description"].lower()
+
+    # 3. Heavy Drain Failure (50 mm/hr, 4 h, drain failure)
+    heavy_drain = scenarios[2]
+    assert heavy_drain["intensity_mm_hr"] == 50.0
+    assert heavy_drain["drain_failure"] is True
+    assert heavy_drain["blockage"] is False
+    # +998 people over heavy base
+    diff_drain = heavy_drain["peak_affected"] - heavy_base["peak_affected"]
+    assert abs(diff_drain - 998) < 5
+    assert "+998" in heavy_drain["deltaPop"]
+    assert "backwater" not in heavy_drain["description"].lower()
+
+    # 4. Heavy Blockage (50 mm/hr, 4 h, blockage)
+    heavy_block = scenarios[3]
+    assert heavy_block["intensity_mm_hr"] == 50.0
+    assert heavy_block["drain_failure"] is False
+    assert heavy_block["blockage"] is True
+    # +2,319 people over heavy base
+    diff_block = heavy_block["peak_affected"] - heavy_base["peak_affected"]
+    assert abs(diff_block - 2319) < 5
+    assert "+2,319" in heavy_block["deltaPop"]
+    assert "backwater" not in heavy_block["description"].lower()
+    assert "ponding in the blocked cells" in heavy_block["description"]
+
+    # 5. Extreme Compound (75 mm/hr, 4 h, both)
+    extreme = scenarios[4]
+    assert extreme["intensity_mm_hr"] == 75.0
+    assert extreme["drain_failure"] is True
+    assert extreme["blockage"] is True
+    # Base 75 mm/hr is ~41,182, delta is +154%
+    assert abs(extreme["peak_affected"] - 104638) < 100
+    assert "+154%" in extreme["deltaPop"]
+    assert "backwater" not in extreme["description"].lower()

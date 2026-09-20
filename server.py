@@ -575,50 +575,50 @@ STRESS_SCENARIO_CONFIGS = [
     {
         "id": "normal_baseline",
         "title": "Normal Rainfall",
-        "subtitle": "Baseline Standard Drainage",
-        "intensity_mm_hr": 10.0,
-        "duration_hrs": 3.0,
+        "subtitle": "Normal rain, 60 mm in 4 h",
+        "intensity_mm_hr": 15.0,
+        "duration_hrs": 4.0,
         "initial_water_m": 0.0,
         "drain_failure": False,
         "blockage": False,
     },
     {
-        "id": "moderate_blocked",
-        "title": "Moderate Monsoon",
-        "subtitle": "Central Canal Blockage (+30m)",
-        "intensity_mm_hr": 30.0,
+        "id": "heavy_base",
+        "title": "Heavy Rainfall",
+        "subtitle": "Very heavy, 200 mm in 4 h",
+        "intensity_mm_hr": 50.0,
         "duration_hrs": 4.0,
         "initial_water_m": 0.0,
         "drain_failure": False,
-        "blockage": True,
+        "blockage": False,
     },
     {
         "id": "heavy_drain_failure",
-        "title": "Heavy Monsoon",
-        "subtitle": "Urban Core Drain Failure (+60m)",
-        "intensity_mm_hr": 30.0,
+        "title": "Heavy + Drain Failure",
+        "subtitle": "Very heavy, 200 mm in 4 h (drain failure at T+60m)",
+        "intensity_mm_hr": 50.0,
         "duration_hrs": 4.0,
         "initial_water_m": 0.0,
         "drain_failure": True,
         "blockage": False,
     },
     {
-        "id": "extreme_flashburst",
-        "title": "Extreme Flashburst",
-        "subtitle": "High-Intensity Cloudburst",
-        "intensity_mm_hr": 60.0,
+        "id": "heavy_blockage",
+        "title": "Heavy + Canal Blockage",
+        "subtitle": "Very heavy, 200 mm in 4 h (canal blocked at T+30m)",
+        "intensity_mm_hr": 50.0,
         "duration_hrs": 4.0,
         "initial_water_m": 0.0,
         "drain_failure": False,
-        "blockage": False,
+        "blockage": True,
     },
     {
         "id": "extreme_compound",
-        "title": "Compound Catastrophe",
-        "subtitle": "Compound Failure (Block + Drain Failure + Standing Water)",
-        "intensity_mm_hr": 60.0,
+        "title": "Extreme Compound",
+        "subtitle": "Extreme cloudburst, 300 mm in 4 h (both events)",
+        "intensity_mm_hr": 75.0,
         "duration_hrs": 4.0,
-        "initial_water_m": 0.15,
+        "initial_water_m": 0.0,
         "drain_failure": True,
         "blockage": True,
     },
@@ -629,11 +629,11 @@ STRESS_SCENARIO_CONFIGS = [
 def get_stress_matrix():
     """
     Returns comparative stress matrix data computed using the actual hydrodynamic physics engine:
-    1. Normal Rainfall (Baseline)
-    2. Moderate Monsoon + Canal Blockage
-    3. Heavy Monsoon + Urban Drain Failure
-    4. Extreme Flashburst
-    5. Compound Catastrophe (Extreme + Block + Drain Failure + Standing Water)
+    1. Normal Rainfall (15 mm/hr, 4 h, no events)
+    2. Heavy Rainfall (50 mm/hr, 4 h, no events) - Reference for Heavy
+    3. Heavy + Drain Failure (50 mm/hr, 4 h, drain failure)
+    4. Heavy + Canal Blockage (50 mm/hr, 4 h, canal blockage)
+    5. Extreme Compound (75 mm/hr, 4 h, drain failure + blockage)
     """
     global _STRESS_MATRIX_CACHE
     if _STRESS_MATRIX_CACHE is not None:
@@ -716,11 +716,17 @@ def get_stress_matrix():
             base_r = same_storm_bases[k]
             d_depth = p_depth - float(base_r["summary"]["peak_depth_m"])
             d_pop = p_pop - float(base_r["summary"]["peak_affected"])
+            base_pop = float(base_r["summary"]["peak_affected"])
+            pct = (d_pop / base_pop * 100) if base_pop > 0 else 0.0
+
             delta_depth_str = f"+{max(0.0, d_depth):.2f}m"
-            delta_pop_str = f"+{int(max(0, d_pop)):,} citizens"
+            if pct >= 1.0:
+                delta_pop_str = f"+{int(round(max(0, d_pop))):,} (+{round(pct):.0f}%)"
+            else:
+                delta_pop_str = f"+{int(round(max(0, d_pop))):,}"
         else:
-            delta_depth_str = "+0.00m (Ref)"
-            delta_pop_str = "+0 (Ref)"
+            delta_depth_str = "Ref"
+            delta_pop_str = "Ref"
 
         # Severity & Risk classification
         if c_wards >= 10 or p_depth >= 1.2:
@@ -741,39 +747,43 @@ def get_stress_matrix():
             badge_bg = "bg-emerald-500"
 
         # Dynamically generate narrative description based on computed hydrodynamic results
-        cid = cfg["id"]
-        if cid == "normal_baseline":
-            narrative = (
-                f"Controlled baseline under {cfg['intensity_mm_hr']:.0f} mm/hr rain ({cfg['duration_hrs']:.0f}h). "
-                f"Peak depth {p_depth:.2f}m with {int(p_pop):,} affected citizens across {c_wards} critical wards; "
-                f"storm drainage network operates within designed capacity."
-            )
-        elif cid == "moderate_blocked":
-            narrative = (
-                f"Moderate storm ({cfg['intensity_mm_hr']:.0f} mm/hr) with 100% canal culvert blockage at t=30m. "
-                f"Localized ponding at the obstruction reaches {p_depth:.2f}m peak depth, impacting {int(p_pop):,} residents "
-                f"across {c_wards} critical wards."
-            )
-        elif cid == "heavy_drain_failure":
-            narrative = (
-                f"Monsoon storm ({cfg['intensity_mm_hr']:.0f} mm/hr) paired with 60% urban core storm-drain capacity loss at t=60m. "
-                f"Water accumulates to {p_depth:.2f}m affecting {int(p_pop):,} citizens across {c_wards} critical wards."
-            )
-        elif cid == "extreme_flashburst":
-            narrative = (
-                f"Severe {cfg['intensity_mm_hr']:.0f} mm/hr cloudburst inundates natural channels. "
-                f"Water depth peaks at {p_depth:.2f}m, impacting {int(p_pop):,} residents with {c_wards} wards breaching critical thresholds."
-            )
-        elif cid == "extreme_compound":
-            narrative = (
-                f"Catastrophic compound event ({cfg['intensity_mm_hr']:.0f} mm/hr + {cfg['initial_water_m']:.2f}m initial water) "
-                f"with simultaneous canal blockage and drain failure. Peak depth reaches {p_depth:.2f}m, impacting {int(p_pop):,} citizens across {c_wards} wards."
-            )
+        total_rain_mm = int(cfg["intensity_mm_hr"] * cfg["duration_hrs"])
+        hours_str = f"{cfg['duration_hrs']:.0f} h" if cfg["duration_hrs"].is_integer() else f"{cfg['duration_hrs']:.1f} h"
+        rain_desc = f"{cfg['intensity_mm_hr']:.0f} mm/hr ({total_rain_mm} mm in {hours_str})"
+
+        if not has_events:
+            if c_wards == 0 and round(p_pop) == 0:
+                narrative = (
+                    f"Normal rainfall at {rain_desc}. Storm drainage network operates within capacity: "
+                    f"0 critical wards, 0 people affected, and no breach occurred."
+                )
+            else:
+                first_str = f"First breach at T+{int(f_crit)} min; " if f_crit is not None else ""
+                narrative = (
+                    f"Heavy baseline storm at {rain_desc} with no disruption events. "
+                    f"{first_str}{c_wards} wards reach Critical, affecting {int(round(p_pop)):,} people."
+                )
         else:
-            narrative = (
-                f"Simulation of {cfg['intensity_mm_hr']:.0f} mm/hr rain over {cfg['duration_hrs']:.1f}h. "
-                f"Resulting peak depth is {p_depth:.2f}m with {int(p_pop):,} affected residents across {c_wards} critical wards."
-            )
+            first_str = f"First breach at T+{int(f_crit)} min; " if f_crit is not None else ""
+            if cfg["drain_failure"] and cfg["blockage"]:
+                narrative = (
+                    f"Extreme cloudburst at {rain_desc} compounded by simultaneous canal blockage and drain failure. "
+                    f"The blockage acts by ponding in the blocked cells while 60% drainage capacity is lost. "
+                    f"{first_str}{c_wards} wards reach Critical, affecting {int(round(p_pop)):,} people "
+                    f"(+{int(round(d_pop)):,} over baseline, +{round(pct):.0f}%)."
+                )
+            elif cfg["drain_failure"]:
+                narrative = (
+                    f"Heavy rainfall at {rain_desc} with 60% drain capacity lost at T+60 min. "
+                    f"{first_str}{c_wards} wards reach Critical, affecting {int(round(p_pop)):,} people "
+                    f"(+{int(round(d_pop)):,} from drain failure)."
+                )
+            elif cfg["blockage"]:
+                narrative = (
+                    f"Heavy rainfall at {rain_desc} with canal blockage at T+30 min. "
+                    f"The blockage acts by ponding in the blocked cells; {first_str}{c_wards} wards reach Critical, "
+                    f"affecting {int(round(p_pop)):,} people (+{int(round(d_pop)):,} from blockage)."
+                )
 
         scenarios_output.append({
             "id": cfg["id"],
@@ -788,7 +798,7 @@ def get_stress_matrix():
             "blockage": cfg["blockage"],
             "peakDepth": f"{p_depth:.2f} m",
             "peak_depth_m": round(p_depth, 3),
-            "peakPop": f"{int(p_pop):,} citizens",
+            "peakPop": f"{int(round(p_pop)):,} citizens",
             "peak_affected": round(p_pop, 1),
             "firstCrit": f"T+{int(f_crit)} min" if f_crit is not None else "None (Safe)",
             "first_critical_min": f_crit,
