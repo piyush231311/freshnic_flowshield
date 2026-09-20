@@ -292,6 +292,8 @@ function TacticalNodeNetwork({
           ? Number(rData.crit_pct[safeStep]) || 0
           : Number(rData?.peak_crit_pct ?? rData?.crit_pct ?? zData?.crit_pct ?? 0);
 
+        const primaryInflowVolume = Number(currentWardData?.primary_inflow_volume ?? rData?.primary_inflow_volume ?? zData?.primary_inflow_volume ?? 0);
+
         list.push({
           id,
           code,
@@ -311,6 +313,7 @@ function TacticalNodeNetwork({
           tCrit,
           classification,
           primaryFloodSource,
+          primaryInflowVolume,
           earlyWarning,
           soilType,
           soil_type: soilType,
@@ -770,20 +773,18 @@ function TacticalNodeNetwork({
                       boxShadow: `0 0 12px ${cfg.ringColor}`,
                     }}
                   >
-                    <span className="font-mono text-[11px] font-bold text-white leading-tight">
+                    <span className="font-mono text-[10px] font-bold text-white leading-tight">
                       {node.code}
                     </span>
                     <span
-                      className="font-mono text-[9px] font-bold leading-tight"
+                      className="font-mono text-[8px] font-bold leading-tight"
                       style={{ color: cfg.color }}
                     >
-                      {(node.depth ?? 0).toFixed(2)}m
+                      {(node.depth ?? 0).toFixed(2)}m | max {(node.maxDepth ?? node.peakDepth ?? 0).toFixed(2)}m
                     </span>
-                    <span
-                      className="w-1.5 h-1.5 rounded-full mt-0.5"
-                      style={{ backgroundColor: cfg.color }}
-                    />
-
+                    <span className="font-mono text-[8px] font-extrabold text-slate-300 leading-tight">
+                      {((node.critPct ?? 0) * 100).toFixed(0)}% crit
+                    </span>
                   </div>
 
                   {/* 1. Armed Primary Wards: Icon Badge */}
@@ -810,13 +811,14 @@ function TacticalNodeNetwork({
                     </div>
                   )}
 
-                  {/* Worsened by Disruption Marker */}
+                  {/* Worsened by Disruption Marker (Icon + Text) */}
                   {isWorsened && !showBaseline && (
                     <div
-                      className="absolute -top-2.5 -left-2.5 px-1.5 py-0.5 rounded bg-rose-950/95 border border-rose-500 text-rose-300 font-mono text-[8px] font-extrabold shadow-md z-30 flex items-center gap-0.5"
+                      className="absolute -top-2.5 -left-2.5 px-1.5 py-0.5 rounded bg-rose-950/95 border border-rose-500 text-rose-300 font-mono text-[8px] font-extrabold shadow-md z-30 flex items-center gap-1"
                       title="Worsened by disruption"
                     >
-                      <span>▲ WORSENED</span>
+                      <AlertTriangle className="w-2.5 h-2.5 text-rose-400 shrink-0" />
+                      <span>WORSENED</span>
                     </div>
                   )}
 
@@ -911,11 +913,11 @@ function TacticalNodeNetwork({
 
                 {/* Metrics */}
                 <div className="mt-2.5 space-y-1.5">
-                  {/* Current Depth */}
+                  {/* Mean Depth */}
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400 flex items-center gap-1">
                       <Droplets className="w-3.5 h-3.5 text-cyan-400" />
-                      Current Depth:
+                      Mean Depth:
                     </span>
                     <span className="text-white font-bold">{(node.depth ?? 0).toFixed(2)} m</span>
                   </div>
@@ -930,11 +932,11 @@ function TacticalNodeNetwork({
                     />
                   </div>
 
-                  {/* Peak / Max Depth */}
+                  {/* Max Depth */}
                   <div className="flex items-center justify-between pt-0.5">
                     <span className="text-slate-400 flex items-center gap-1">
                       <Activity className="w-3.5 h-3.5 text-indigo-400" />
-                      Peak Depth:
+                      Max Depth:
                     </span>
                     <span className="text-white font-bold">
                       {(node.maxDepth ?? node.peakDepth ?? 0).toFixed(2)} m
@@ -945,14 +947,14 @@ function TacticalNodeNetwork({
                   <div className="flex items-center justify-between pt-0.5">
                     <span className="text-slate-400 flex items-center gap-1">
                       <AlertCircle className="w-3.5 h-3.5 text-red-400" />
-                      % Critical Cells:
+                      % of Cells Critical:
                     </span>
                     <span className="text-red-300 font-bold">
                       {((node.critPct ?? 0) * 100).toFixed(1)}%
                     </span>
                   </div>
                   <div className="text-[9px] text-slate-400 italic">
-                    *Critical = &gt;5% of cells &ge; 0.5m
+                    Critical = more than 5% of cells at least 0.5 m deep
                   </div>
 
                   {/* Average Elevation */}
@@ -977,17 +979,31 @@ function TacticalNodeNetwork({
                     </span>
                   </div>
 
-                  {/* Primary Inflow Source (hidden if Self-Contained or none) */}
-                  {node.primaryFloodSource && node.primaryFloodSource !== 'Self-Contained' && (
+                  {/* Primary Inflow Source (hidden if inflow is 0 or Self-Contained) */}
+                  {Boolean(node.primaryInflowVolume > 0 && node.primaryFloodSource && node.primaryFloodSource !== 'Self-Contained') && (
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-slate-400 flex items-center gap-1">
                         Inflow Source:
                       </span>
                       <span className="text-cyan-300 font-bold">
-                        {node.primaryFloodSource}
+                        {node.primaryFloodSource} ({node.primaryInflowVolume.toFixed(1)} m³)
                       </span>
                     </div>
                   )}
+
+                  {/* Disruption Worsened Text in Tooltip */}
+                  {(() => {
+                    const wardImpact = simData?.impact?.per_ward?.find((w) => w.id === node.id);
+                    if (wardImpact?.worsened && !showBaseline) {
+                      return (
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-rose-950/80 border border-rose-500/60 text-rose-300 font-bold text-[10px] mt-2">
+                          <AlertTriangle className="w-3 h-3 text-rose-400 shrink-0" />
+                          <span>Worsened by Disruption</span>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
 
                   {/* Early Warning Forecast (if breached) with Live Countdown */}
                   {node.earlyWarning?.breached && (() => {

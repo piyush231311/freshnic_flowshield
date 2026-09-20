@@ -114,7 +114,7 @@ export default function App() {
     setActiveTab('map');
   };
 
-  // High-level Global KPI telemetry derived from current slice
+  // High-level Global KPI telemetry derived from current slice (switches to baseline when showBaseline is ON)
   const globalSummary = useMemo(() => {
     if (!simData?.summary) {
       return {
@@ -128,23 +128,41 @@ export default function App() {
 
     const frame = Math.max(0, Math.min(currentTimeIndex, (simData?.times_min?.length || 1) - 1));
 
-    const currentAffected = simData.affected_pop && simData.affected_pop[frame] !== undefined
-      ? (simData.affected_pop[frame] ?? 0)
+    const baselineAffectedPop = simData?.baseline_affected_pop || simData?.impact?.baseline_affected_pop;
+    const baselineRegionStatus = simData?.baseline_region_status || simData?.impact?.baseline_region_status;
+
+    const affectedSeries = (showBaseline && baselineAffectedPop) ? baselineAffectedPop : simData.affected_pop;
+    const statusSeries = (showBaseline && baselineRegionStatus) ? baselineRegionStatus : simData.region_status;
+
+    const currentAffected = affectedSeries && affectedSeries[frame] !== undefined
+      ? (affectedSeries[frame] ?? 0)
       : (simData.summary.peak_affected ?? 0);
 
     let critCount = 0;
-    if (simData.region_status && simData.region_status[frame]) {
-      critCount = simData.region_status[frame].filter((s) => s === 2).length;
+    if (statusSeries && statusSeries[frame]) {
+      critCount = statusSeries[frame].filter((s) => s === 2).length;
     }
 
+    const peakAffected = (showBaseline && baselineAffectedPop)
+      ? Math.max(...baselineAffectedPop)
+      : (simData.summary.peak_affected ?? 0);
+
+    const peakDepth = (showBaseline && simData?.impact?.totals?.delta_peak_depth_m !== undefined)
+      ? Math.max(0, (simData.summary.peak_depth_m ?? 0) - (simData.impact.totals.delta_peak_depth_m ?? 0))
+      : (simData.summary.peak_depth_m ?? 0);
+
+    const firstCrit = (showBaseline && simData?.impact?.totals?.delta_first_critical_min !== undefined && simData.summary.first_critical_min != null)
+      ? (simData.summary.first_critical_min - simData.impact.totals.delta_first_critical_min)
+      : (simData.summary.first_critical_min ?? null);
+
     return {
-      peakDepth: simData.summary.peak_depth_m ?? 0,
+      peakDepth,
       totalAffected: currentAffected ?? 0,
-      peakAffected: simData.summary.peak_affected ?? 0,
-      firstCrit: simData.summary.first_critical_min ?? null,
+      peakAffected,
+      firstCrit,
       critWards: critCount ?? 0,
     };
-  }, [simData, currentTimeIndex]);
+  }, [simData, currentTimeIndex, showBaseline]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-teal-500 selection:text-slate-950">
@@ -334,13 +352,18 @@ export default function App() {
                       .join(', ');
                     const wardsStr = worsenedWards ? ` (${worsenedWards})` : '';
 
-                    return `${label}: +${Math.round(totals.delta_peak_affected || 0).toLocaleString()} people (+${totals.delta_peak_affected_pct || 0}%), +${totals.delta_critical_wards || 0} critical wards${wardsStr}, +${totals.delta_peak_depth_m || 0}m peak depth`;
+                    const pct = totals.delta_peak_affected_pct || 0;
+                    const pctStr = pct >= 100
+                      ? `about +${(Math.round(pct / 100) * 100).toLocaleString()}%`
+                      : `+${pct}%`;
+
+                    return `${label}: +${Math.round(totals.delta_peak_affected || 0).toLocaleString()} people (${pctStr}), +${totals.delta_critical_wards || 0} critical wards${wardsStr}`;
                   })()}
                 </span>
               </div>
             </div>
 
-            {/* Clean Baseline Comparison Toggle */}
+            {/* Clean Baseline Comparison Toggle ("Show without disruptions") */}
             <button
               type="button"
               role="switch"
@@ -353,7 +376,7 @@ export default function App() {
               }`}
             >
               <Split className="w-3.5 h-3.5 text-teal-400" />
-              <span>Clean Baseline:</span>
+              <span>Show without disruptions:</span>
               <span className={`px-1.5 py-0.2 rounded text-[10px] ${showBaseline ? 'bg-teal-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
                 {showBaseline ? 'ON' : 'OFF'}
               </span>
@@ -366,10 +389,18 @@ export default function App() {
           <ErrorBoundary fallbackTitle="Tactical Node Network encountered an error.">
             <TacticalNodeNetwork
               currentStep={clampedTimeIndex}
-              regionStatus={simData?.region_status}
+              regionStatus={
+                showBaseline && (simData?.baseline_region_status || simData?.impact?.baseline_region_status)
+                  ? (simData?.baseline_region_status || simData?.impact?.baseline_region_status)
+                  : simData?.region_status
+              }
               regionData={simData?.region_data}
               regionDepth={simData?.region_depth}
-              regionAffected={simData?.region_affected}
+              regionAffected={
+                showBaseline && (simData?.baseline_affected_pop || simData?.impact?.baseline_affected_pop)
+                  ? (simData?.baseline_affected_pop || simData?.impact?.baseline_affected_pop)
+                  : simData?.region_affected
+              }
               zones={simData?.zones}
               edgeFlows={simData?.edge_flows}
               fluxTimeline={simData?.flux_timeline}
@@ -391,11 +422,18 @@ export default function App() {
               currentTimeMin={currentTimeMin}
               selectedWardId={selectedWardId}
               setSelectedWardId={setSelectedWardId}
-              regionStatus={simData?.region_status}
+              regionStatus={
+                showBaseline && (simData?.baseline_region_status || simData?.impact?.baseline_region_status)
+                  ? (simData?.baseline_region_status || simData?.impact?.baseline_region_status)
+                  : simData?.region_status
+              }
               regionData={simData?.region_data}
               regionDepth={simData?.region_depth}
-
-              regionAffected={simData?.region_affected}
+              regionAffected={
+                showBaseline && (simData?.baseline_affected_pop || simData?.impact?.baseline_affected_pop)
+                  ? (simData?.baseline_affected_pop || simData?.impact?.baseline_affected_pop)
+                  : simData?.region_affected
+              }
             />
           </ErrorBoundary>
         )}

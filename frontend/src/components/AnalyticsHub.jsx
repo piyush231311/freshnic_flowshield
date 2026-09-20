@@ -34,6 +34,13 @@ function AnalyticsHub({
   const simData = useSimulationStore((state) => state.simData);
   const showBaseline = useSimulationStore((state) => state.showBaseline);
 
+  // When showBaseline is toggled ON, automatically switch to affected population view to display the dashed baseline overlay
+  React.useEffect(() => {
+    if (showBaseline) {
+      setChartMetric('affected');
+    }
+  }, [showBaseline]);
+
   // Generate hydrograph chart data for the selected ward
   const chartData = useMemo(() => {
     if (!timesMin || timesMin.length === 0) return [];
