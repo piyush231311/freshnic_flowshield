@@ -313,6 +313,7 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
         reg_affected_list = np.zeros((T, n_regions), dtype=np.float32)
         reg_depth_list = np.zeros((T, n_regions), dtype=np.float32)
         reg_max_depth_list = np.zeros((T, n_regions), dtype=np.float32)
+        reg_crit_pct_list = np.zeros((T, n_regions), dtype=np.float32)
         reg_info_list = []
 
         crit_cube = (hcube >= h_crit)
@@ -326,6 +327,7 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
             if cell_count > 0:
                 crit_pct = crit_cube[:, mask].sum(axis=1) / cell_count
                 warn_pct = warn_cube[:, mask].sum(axis=1) / cell_count
+                reg_crit_pct_list[:, r] = crit_pct
 
                 # Critical if >5% reach critical threshold, Warning if >5% reach warning threshold
                 r_status = np.where(crit_pct > 0.05, 2, np.where(warn_pct > 0.05, 1, 0)).astype(np.int8)
@@ -389,6 +391,8 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
                 regional_zones[r_str]["infiltration_rate_mm_hr"] = cfg["infil_rate_mm_hr"]
                 regional_zones[r_str]["cumulative_absorbed_m3"] = round(absorbed_m3, 2)
                 regional_zones[r_str]["soil_saturation_pct"] = round(sat_ratio * 100.0, 1)
+                regional_zones[r_str]["crit_pct"] = round(float(reg_crit_pct_list[:, r].max()), 4)
+                regional_zones[r_str]["max_depth"] = round(float(reg_max_depth_list[:, r].max()), 4)
 
         region_data = [
             {
@@ -397,6 +401,7 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
                 "code": f"W-{r+1:02d}",
                 "depth": [round(float(d), 4) for d in reg_depth_list[:, r]],
                 "max_depth": [round(float(d), 4) for d in reg_max_depth_list[:, r]],
+                "crit_pct": [round(float(c), 4) for c in reg_crit_pct_list[:, r]],
                 "affected": [round(float(a), 1) for a in reg_affected_list[:, r]],
                 "status": [int(s) for s in reg_status_list[:, r]],
                 "cumulative_absorbed_m3": [round(float(v), 2) for v in reg_absorbed_m3_arr[:, r]],
@@ -432,6 +437,8 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
                     "code": f"W-{r+1:02d}",
                     "name": f"Ward {r+1:02d}",
                     "depth": round(float(mean_depth), 3),
+                    "max_depth": round(float(reg_max_depth_list[t, r]), 3),
+                    "crit_pct": round(float(reg_crit_pct_list[t, r]), 4),
                     "affected": int(ward_affected),
                     "status": ward_status,
                     "cumulative_absorbed_m3": round(float(ward_absorbed_vol_m3), 1),

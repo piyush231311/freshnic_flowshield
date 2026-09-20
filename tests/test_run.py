@@ -50,3 +50,65 @@ def test_triangular_storm_total_depth():              # area under triangle = 0.
     n = 3 * 3600 // 10
     total_mm = rain_series(storm(60), n, 10.0).sum() * 10 / 3600
     assert abs(total_mm - 0.5 * 60 * 3) < 0.5
+
+def test_impact_null_with_no_events():
+    from server import simulate, SimulationRequest
+    req = SimulationRequest(
+        intensity_mm_hr=25.0,
+        duration_hrs=2.0,
+        initial_water_m=0.0,
+        drain_failure=False,
+        blockage=False,
+        grid_size=40,
+    )
+    res = simulate(req)
+    assert res["impact"] is None
+    assert res["baseline_summary"] is not None
+
+def test_impact_equals_difference_of_two_runs():
+    from server import simulate, SimulationRequest
+    req = SimulationRequest(
+        intensity_mm_hr=50.0,
+        duration_hrs=3.0,
+        initial_water_m=0.0,
+        drain_failure=True,
+        blockage=False,
+        grid_size=40,
+    )
+    res = simulate(req)
+    assert res["impact"] is not None
+    totals = res["impact"]["totals"]
+
+    req_no = SimulationRequest(
+        intensity_mm_hr=50.0,
+        duration_hrs=3.0,
+        initial_water_m=0.0,
+        drain_failure=False,
+        blockage=False,
+        grid_size=40,
+    )
+    res_no = simulate(req_no)
+
+    diff_aff = round(float(res["summary"]["peak_affected"] - res_no["summary"]["peak_affected"]), 1)
+    diff_cells = int(res["summary"]["critical_cells"] - res_no["summary"]["critical_cells"])
+
+    assert totals["delta_peak_affected"] == diff_aff
+    assert totals["delta_critical_cells"] == diff_cells
+
+def test_reference_case_reproduces():
+    from engine.city_generator import generate_advanced_city
+    from server import build_scenario
+    city40 = generate_advanced_city(N=40, M=40)
+    sc_with = build_scenario(27.0, 9.0, 0.0, drain_failure=True, blockage=True, grid_size=40)
+    res_with = run_scenario(city40, sc_with, intensity_mm_hr=27.0, duration_hrs=9.0, initial_water_m=0.0)
+
+    sc_no = build_scenario(27.0, 9.0, 0.0, drain_failure=False, blockage=False, grid_size=40)
+    res_no = run_scenario(city40, sc_no, intensity_mm_hr=27.0, duration_hrs=9.0, initial_water_m=0.0)
+
+    crit_wards_with = [f"W-{i+1:02d}" for i in range(16) if (res_with["region_status"] == 2).any(axis=0)[i]]
+    crit_wards_no = [f"W-{i+1:02d}" for i in range(16) if (res_no["region_status"] == 2).any(axis=0)[i]]
+
+    assert crit_wards_with == ["W-10", "W-11", "W-16"]
+    assert crit_wards_no == ["W-16"]
+    assert abs(res_with["summary"]["peak_affected"] - 6659) < 25
+    assert abs(res_no["summary"]["peak_affected"] - 276) < 15

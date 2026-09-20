@@ -42,6 +42,10 @@ _CITY_CACHE: Dict[int, Dict[str, np.ndarray]] = {}
 _SIMULATION_CACHE: OrderedDict = OrderedDict()
 _SIMULATION_CACHE_MAX_SIZE: int = 64
 
+# In-memory cache for same-storm baseline (no-event) simulations:
+# Key: (intensity_mm_hr, duration_hrs, initial_water_m, grid_size)
+_BASELINE_SIM_CACHE: Dict[Tuple[float, float, float, int], Dict[str, Any]] = {}
+
 
 class SimulationRequest(BaseModel):
     intensity_mm_hr: float = Field(
@@ -237,22 +241,38 @@ def simulate(req: SimulationRequest):
         initial_water_m=req.initial_water_m,
     )
 
-    # Compute baseline scenario for frontend delta comparisons (10 mm/hr, 0 initial water, no disruptions)
-    baseline_sc = build_scenario(
-        10.0,
-        req.duration_hrs,
-        0.0,
-        False,
-        False,
-        req.grid_size,
+    # Same-storm baseline simulation: when disruptions are active, compare against the identical storm without disruptions
+    has_events = bool(req.drain_failure or req.blockage)
+    base_key = (
+        round(float(req.intensity_mm_hr), 2),
+        round(float(req.duration_hrs), 2),
+        round(float(req.initial_water_m), 2),
+        int(req.grid_size),
     )
-    baseline_res = run_scenario(
-        city,
-        baseline_sc,
-        intensity_mm_hr=10.0,
-        duration_hrs=req.duration_hrs,
-        initial_water_m=0.0,
-    )
+
+    if has_events:
+        if base_key in _BASELINE_SIM_CACHE:
+            baseline_res = _BASELINE_SIM_CACHE[base_key]
+        else:
+            baseline_sc = build_scenario(
+                req.intensity_mm_hr,
+                req.duration_hrs,
+                req.initial_water_m,
+                False,
+                False,
+                req.grid_size,
+            )
+            baseline_res = run_scenario(
+                city,
+                baseline_sc,
+                intensity_mm_hr=req.intensity_mm_hr,
+                duration_hrs=req.duration_hrs,
+                initial_water_m=req.initial_water_m,
+            )
+            _BASELINE_SIM_CACHE[base_key] = baseline_res
+    else:
+        baseline_res = result
+        _BASELINE_SIM_CACHE[base_key] = result
 
     # Sanitize float values in summary
     summary = dict(result["summary"])
@@ -266,6 +286,60 @@ def simulate(req: SimulationRequest):
         val = base_summary.get(field)
         if val is not None and (np.isnan(val) or np.isinf(val)):
             base_summary[field] = None
+
+    # Compute additive impact object when disruptions are present
+    impact = None
+    if has_events:
+        crit_wards_with = int((result["region_status"] == 2).any(axis=0).sum()) if "region_status" in result else 0
+        crit_wards_without = int((baseline_res["region_status"] == 2).any(axis=0).sum()) if "region_status" in baseline_res else 0
+
+        f_crit_with = summary.get("first_critical_min")
+        f_crit_without = base_summary.get("first_critical_min")
+        delta_first_crit = round(f_crit_with - f_crit_without, 1) if (f_crit_with is not None and f_crit_without is not None) else None
+
+        totals = {
+            "delta_peak_affected": round(float(result["summary"]["peak_affected"] - baseline_res["summary"]["peak_affected"]), 1),
+            "delta_peak_affected_pct": round(float(result["summary"]["peak_affected_pct"] - baseline_res["summary"]["peak_affected_pct"]), 2),
+            "delta_critical_cells": int(result["summary"]["critical_cells"] - baseline_res["summary"]["critical_cells"]),
+            "delta_critical_wards": int(crit_wards_with - crit_wards_without),
+            "delta_peak_depth_m": round(float(result["summary"]["peak_depth_m"] - baseline_res["summary"]["peak_depth_m"]), 3),
+            "delta_first_critical_min": delta_first_crit,
+        }
+
+        per_ward = []
+        n_regions = result.get("n_regions", 16)
+        region_map = city.get("region_map")
+        for r in range(n_regions):
+            s_with = int(result["region_status"][:, r].max()) if "region_status" in result else 0
+            s_without = int(baseline_res["region_status"][:, r].max()) if "region_status" in baseline_res else 0
+
+            d_with = float(result["h"][:, region_map == r].max()) if region_map is not None else float(result["region_data"][r]["max_depth"][-1])
+            d_without = float(baseline_res["h"][:, region_map == r].max()) if region_map is not None else float(baseline_res["region_data"][r]["max_depth"][-1])
+            delta_d = round(d_with - d_without, 4)
+
+            t_crit_with = result.get("zones", {}).get(str(r), {}).get("t_crit")
+            t_crit_without = baseline_res.get("zones", {}).get(str(r), {}).get("t_crit")
+
+            worsened = bool(s_with > s_without or delta_d > 0.05)
+
+            per_ward.append({
+                "id": r,
+                "name": f"Ward {r+1:02d}",
+                "code": f"W-{r+1:02d}",
+                "status_with": s_with,
+                "status_without": s_without,
+                "max_depth_with": round(d_with, 4),
+                "max_depth_without": round(d_without, 4),
+                "delta_max_depth": delta_d,
+                "first_critical_min_with": t_crit_with,
+                "first_critical_min_without": t_crit_without,
+                "worsened": worsened,
+            })
+
+        impact = {
+            "totals": totals,
+            "per_ward": per_ward,
+        }
 
     # Global 2D t_crit matrix with None for unbreached cells
     t_crit_arr = result["t_crit"]
@@ -287,6 +361,9 @@ def simulate(req: SimulationRequest):
         "summary": summary,
         "zones": summary.get("zones", {}),
         "baseline_summary": base_summary,
+        "impact": impact,
+        "baseline_region_status": baseline_res["region_status"].tolist() if (impact is not None and "region_status" in baseline_res) else None,
+        "baseline_affected_pop": baseline_res["affected_pop"].tolist() if (impact is not None and "affected_pop" in baseline_res) else None,
     }
 
     # Region-Based / Ward-Based data structures
@@ -498,8 +575,27 @@ def get_stress_matrix():
             "crit_wards": crit_wards,
         })
 
-    base_depth = runs[0]["peak_depth"]
-    base_pop = runs[0]["peak_affected"]
+    # Map same-storm baselines: for each scenario with disruptions, compute the identical storm without disruptions
+    same_storm_bases = {}
+    for cfg in STRESS_SCENARIO_CONFIGS:
+        k = (cfg["intensity_mm_hr"], cfg["duration_hrs"], cfg["initial_water_m"])
+        if (cfg["drain_failure"] or cfg["blockage"]) and k not in same_storm_bases:
+            sc_no_event = build_scenario(
+                cfg["intensity_mm_hr"],
+                cfg["duration_hrs"],
+                cfg["initial_water_m"],
+                False,
+                False,
+                sim_grid_size,
+            )
+            base_res = run_scenario(
+                city,
+                sc_no_event,
+                intensity_mm_hr=cfg["intensity_mm_hr"],
+                duration_hrs=cfg["duration_hrs"],
+                initial_water_m=cfg["initial_water_m"],
+            )
+            same_storm_bases[k] = base_res
 
     scenarios_output = []
     for r in runs:
@@ -509,12 +605,17 @@ def get_stress_matrix():
         f_crit = r["first_crit"]
         c_wards = r["crit_wards"]
 
-        d_depth = p_depth - base_depth
-        d_pop = p_pop - base_pop
-
-        is_base = cfg["id"] == "normal_baseline"
-        delta_depth_str = "+0.00m (Ref)" if is_base else f"+{max(0.0, d_depth):.2f}m"
-        delta_pop_str = "+0 (Ref)" if is_base else f"+{int(max(0, d_pop)):,} citizens"
+        has_events = bool(cfg["drain_failure"] or cfg["blockage"])
+        if has_events:
+            k = (cfg["intensity_mm_hr"], cfg["duration_hrs"], cfg["initial_water_m"])
+            base_r = same_storm_bases[k]
+            d_depth = p_depth - float(base_r["summary"]["peak_depth_m"])
+            d_pop = p_pop - float(base_r["summary"]["peak_affected"])
+            delta_depth_str = f"+{max(0.0, d_depth):.2f}m"
+            delta_pop_str = f"+{int(max(0, d_pop)):,} citizens"
+        else:
+            delta_depth_str = "+0.00m (Ref)"
+            delta_pop_str = "+0 (Ref)"
 
         # Severity & Risk classification
         if c_wards >= 10 or p_depth >= 1.2:
@@ -545,7 +646,7 @@ def get_stress_matrix():
         elif cid == "moderate_blocked":
             narrative = (
                 f"Moderate storm ({cfg['intensity_mm_hr']:.0f} mm/hr) with 100% canal culvert blockage at t=30m. "
-                f"Upstream backwater reaches {p_depth:.2f}m peak depth, impacting {int(p_pop):,} residents "
+                f"Localized ponding at the obstruction reaches {p_depth:.2f}m peak depth, impacting {int(p_pop):,} residents "
                 f"across {c_wards} critical wards."
             )
         elif cid == "heavy_drain_failure":

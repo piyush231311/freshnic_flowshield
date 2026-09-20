@@ -200,6 +200,33 @@ Designed for instant rendering of KPI cards and dashboard header metrics:
 | `"mass_err"` | `float` | Conservation of mass balance error in cubic metres equivalent. |
 | `"mass_err_rel"` | `float` | Relative mass error fraction ($< 10^{-9}$ in valid simulations). |
 
+### 4.2. Disruption Impact Object (`"impact"`) & Baseline Summary (`"baseline_summary"`)
+
+When infrastructure disruption events (`drain_failure` or `blockage`) are simulated:
+- `"baseline_summary"`: KPI summary dictionary of the **identical storm** (same rainfall intensity, duration, initial water depth, and grid resolution) simulated with disruptions disabled.
+- `"impact"`: Additive comparison dictionary isolating the exact incremental damage caused by the disruptions:
+  - `"totals"`:
+    - `"delta_peak_affected"` (`float`): Additional affected people caused by disruptions ($\text{peak\_affected}_{\text{with}} - \text{peak\_affected}_{\text{without}}$).
+    - `"delta_peak_affected_pct"` (`float`): Additional affected population share percentage.
+    - `"delta_critical_cells"` (`int`): Additional grid cells breaching $h_{crit}$.
+    - `"delta_critical_wards"` (`int`): Additional wards reaching Critical status ($\text{status} = 2$).
+    - `"delta_peak_depth_m"` (`float`): Incremental peak flood depth in metres.
+    - `"delta_first_critical_min"` (`float` or `None`): Change in time to first critical breach in minutes.
+  - `"per_ward"`: Array of 16 ward-level comparison objects:
+    - `"id"` (`int`): Region index ($0..15$).
+    - `"name"` / `"code"` (`str`): e.g. `"Ward 11"` / `"W-11"`.
+    - `"status_with"` / `"status_without"` (`int`): Worst severity status with and without disruptions ($0, 1, 2$).
+    - `"max_depth_with"` / `"max_depth_without"` (`float`): Maximum water depth with and without disruptions.
+    - `"delta_max_depth"` (`float`): Incremental maximum depth caused by disruptions.
+    - `"first_critical_min_with"` / `"first_critical_min_without"` (`float` or `None`): Time to critical breach.
+    - `"worsened"` (`bool`): `True` if ward status worsened or maximum depth increased by $> 0.05\text{m}$.
+  - `"baseline_region_status"` (`list[list[int]]`): $[T, 16]$ status time series for same-storm baseline.
+  - `"baseline_affected_pop"` (`list[float]`): $[T]$ affected population time series for same-storm baseline.
+
+When neither disruption event is active, `"impact"` is `None`, and `"baseline_summary"` matches `"summary"`.
+
+Each ward in `region_data` also provides `"crit_pct"`: the share of cells within the ward with depth $h \ge h_{crit}$ ($[0.0, 1.0]$).
+
 ---
 
 ## 5. Front-End Mock / Stand-In Data for Person B

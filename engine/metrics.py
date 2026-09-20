@@ -42,12 +42,14 @@ def compute_regional_metrics(hcube, t_crit, region_map, pop_arr, expo, z=None, f
             valid_t = cell_t[~np.isnan(cell_t)]
             r_t_crit = float(np.nanmin(valid_t)) if len(valid_t) > 0 else None
             r_peak_depth = float(hcube[:, mask].max())
+            r_crit_pct = float((hcube[:, mask] >= h_crit).any(axis=0).sum() / cell_count)
             r_affected = float((expo[:, mask] * pop_arr[mask]).sum(axis=1).max())
             r_total_pop = float(pop_arr[mask].sum())
             r_avg_elevation = float(z_arr[mask].mean()) if z_arr is not None else 0.0
         else:
             r_t_crit = None
             r_peak_depth = 0.0
+            r_crit_pct = 0.0
             r_affected = 0.0
             r_total_pop = 0.0
             r_avg_elevation = 0.0
@@ -76,6 +78,8 @@ def compute_regional_metrics(hcube, t_crit, region_map, pop_arr, expo, z=None, f
             "code": f"W-{r+1:02d}",
             "t_crit": r_t_crit,
             "peak_depth": round(r_peak_depth, 4),
+            "max_depth": round(r_peak_depth, 4),
+            "crit_pct": round(r_crit_pct, 4),
             "affected_population": round(r_affected, 1),
             "total_pop": round(r_total_pop, 1),
             "total_population": round(r_total_pop, 0),
