@@ -112,3 +112,40 @@ def test_reference_case_reproduces():
     assert crit_wards_no == ["W-16"]
     assert abs(res_with["summary"]["peak_affected"] - 6659) < 25
     assert abs(res_no["summary"]["peak_affected"] - 276) < 15
+
+def test_disruptions_metadata_grid40_and_80():
+    from server import get_disruptions_metadata
+
+    # Both toggles off gives an empty list
+    empty = get_disruptions_metadata(grid_size=40, drain_failure=False, blockage=False)
+    assert empty == []
+
+    for sz in [40, 80]:
+        disruptions = get_disruptions_metadata(grid_size=sz, drain_failure=True, blockage=True)
+        assert len(disruptions) == 2
+
+        # Blockage: primary [10] (Ward W-11)
+        blk = next(d for d in disruptions if d["type"] == "blockage")
+        assert blk["primary_ward_ids"] == [10]
+        blk_overlap = blk["ward_overlap"].get(10, blk["ward_overlap"].get("10"))
+        if sz == 40:
+            assert abs(blk_overlap - 0.14) < 0.02
+        else:
+            assert abs(blk_overlap - 0.035) < 0.01
+
+        # Drain failure: primary [9, 10, 13, 14] with overlaps about 0.8, 0.8, 0.4, 0.4
+        df = next(d for d in disruptions if d["type"] == "drain_failure")
+        assert df["primary_ward_ids"] == [9, 10, 13, 14]
+
+        ov = df["ward_overlap"]
+        get_ov = lambda wid: ov.get(wid, ov.get(str(wid)))
+        assert abs(get_ov(9) - 0.80) < 0.05
+        assert abs(get_ov(10) - 0.80) < 0.05
+        assert abs(get_ov(13) - 0.40) < 0.05
+        assert abs(get_ov(14) - 0.40) < 0.05
+
+        # Partial ids 8 and 11 (~0.16), 12 and 15 (~0.08)
+        assert abs(get_ov(8) - 0.16) < 0.05
+        assert abs(get_ov(11) - 0.16) < 0.05
+        assert abs(get_ov(12) - 0.08) < 0.05
+        assert abs(get_ov(15) - 0.08) < 0.05

@@ -158,8 +158,108 @@ def root():
     return {
         "name": "FlowShield Simulation API",
         "status": "online",
-        "endpoints": ["/api/simulate"],
+        "endpoints": ["/api/simulate", "/api/disruptions"],
     }
+
+
+def get_disruptions_metadata(
+    grid_size: int = 40,
+    drain_failure: bool = False,
+    blockage: bool = False,
+    city: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Computes spatial overlap and primary ward attribution for active disruptions
+    using city['region_map'] dynamically without hardcoding ward IDs.
+    - Blockage primary: every ward containing blocked cells.
+    - Drain failure primary: wards with overlap >= 0.25 (25%).
+    """
+    if not drain_failure and not blockage:
+        return []
+
+    if city is None:
+        city = get_or_create_city(grid_size)
+
+    region_map = city["region_map"]
+    scenario = build_scenario(
+        intensity_mm_hr=0.0,
+        duration_hrs=0.0,
+        initial_water_m=0.0,
+        drain_failure=drain_failure,
+        blockage=blockage,
+        grid_size=grid_size,
+    )
+
+    disruptions = []
+    for ev in scenario["events"]:
+        ev_type = ev["type"]
+        if ev_type == "blockage":
+            b_cells = ev.get("cells", [])
+            ward_ids = [int(region_map[r, c]) for r, c in b_cells]
+            uniq_wards, counts = np.unique(ward_ids, return_counts=True)
+            ward_overlap = {}
+            primary_ward_ids = []
+            for w, cnt in zip(uniq_wards, counts):
+                total_w_cells = int((region_map == w).sum())
+                share = round(float(cnt / total_w_cells), 4) if total_w_cells > 0 else 0.0
+                ward_overlap[int(w)] = share
+                if cnt > 0:
+                    primary_ward_ids.append(int(w))
+
+            primary_ward_ids.sort()
+
+            disruptions.append({
+                "type": "blockage",
+                "label": "Central Canal Blockage",
+                "t_start_min": float(ev.get("t_start_min", 30.0)),
+                "severity_or_loss": float(ev.get("severity", 1.0)),
+                "ward_overlap": ward_overlap,
+                "primary_ward_ids": primary_ward_ids,
+            })
+
+        elif ev_type == "drain_failure":
+            r0, r1, c0, c1 = ev["region"]
+            sub_map = region_map[r0:r1, c0:c1]
+            uniq_wards, counts = np.unique(sub_map, return_counts=True)
+            ward_overlap = {}
+            primary_ward_ids = []
+            for w, cnt in zip(uniq_wards, counts):
+                total_w_cells = int((region_map == w).sum())
+                share = round(float(cnt / total_w_cells), 4) if total_w_cells > 0 else 0.0
+                ward_overlap[int(w)] = share
+                if share >= 0.25:
+                    primary_ward_ids.append(int(w))
+
+            primary_ward_ids.sort()
+
+            disruptions.append({
+                "type": "drain_failure",
+                "label": "Urban Core Drain Failure",
+                "t_start_min": float(ev.get("t_start_min", 60.0)),
+                "severity_or_loss": float(ev.get("loss", 0.60)),
+                "ward_overlap": ward_overlap,
+                "primary_ward_ids": primary_ward_ids,
+            })
+
+    return disruptions
+
+
+@app.get("/api/disruptions")
+def get_disruptions(
+    grid_size: int = 40,
+    drain_failure: bool = False,
+    blockage: bool = False,
+):
+    """
+    Fast metadata endpoint returning spatial overlap and primary ward attribution
+    for requested disruptions without running a simulation.
+    """
+    disruptions = get_disruptions_metadata(
+        grid_size=grid_size,
+        drain_failure=drain_failure,
+        blockage=blockage,
+    )
+    return {"disruptions": sanitize_for_json(disruptions)}
 
 
 def sanitize_for_json(val: Any) -> Any:
@@ -362,6 +462,7 @@ def simulate(req: SimulationRequest):
         "zones": summary.get("zones", {}),
         "baseline_summary": base_summary,
         "impact": impact,
+        "disruptions": get_disruptions_metadata(req.grid_size, req.drain_failure, req.blockage, city=city),
         "baseline_region_status": baseline_res["region_status"].tolist() if (impact is not None and "region_status" in baseline_res) else None,
         "baseline_affected_pop": baseline_res["affected_pop"].tolist() if (impact is not None and "affected_pop" in baseline_res) else None,
     }
