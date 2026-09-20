@@ -67,6 +67,7 @@ The `scenario` dictionary configures the meteorological conditions (rainfall hye
 | `"name"` | `str` | Yes | Human-readable scenario name (e.g., `"Extreme + drain failure"`). |
 | `"rain"` | `dict` | Yes | Precipitation configuration defining intensity over time. |
 | `"events"` | `list[dict]` | Yes | Chronological list of disruption events scheduled during simulation. |
+| `"initial_water_m"` | `float` | No | Initial standing water depth in metres applied to low ground ($\le 20\text{th}$ percentile elevation and channels). Default: `0.0`. |
 
 #### 3.2.1. Rain Configuration (`scenario["rain"]`)
 
@@ -192,6 +193,8 @@ Designed for instant rendering of KPI cards and dashboard header metrics:
 | `"peak_depth_m"` | `float` | Maximum water depth observed across all cells and frames ($\max(h)$). |
 | `"critical_cells"` | `int` | Count of unique cells that ever exceeded $h_{crit}$ during the run. |
 | `"first_critical_min"` | `float` or `None` | Earliest time in minutes any cell breached $h_{crit}$ (`None` if no cells breached). |
+| `"first_ward_critical_min"` | `float` or `None` | Earliest time in minutes any ward reached critical status (`None` if no wards breached). |
+| `"median_t_crit_min"` | `float` or `None` | Median time to critical depth across all cells that breached $h_{crit}$ (`None` if no cells breached). |
 | `"peak_affected"` | `float` | Maximum number of affected people at the worst time frame. |
 | `"peak_affected_pct"` | `float` | Maximum affected population expressed as percentage of total city population. |
 | `"mass_err"` | `float` | Conservation of mass balance error in cubic metres equivalent. |

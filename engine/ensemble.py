@@ -70,8 +70,12 @@ def run_ensemble_simulation(
     if channel_mask.any():
         gain[:, :, channel_mask] = 2.0  # Faster river channel conveyance
 
-    # Water depth state tensor initialized with initial_water_m across all runs
-    h = np.full((n_runs, N, M), float(initial_water_m), dtype=np.float64)
+    # Water depth state tensor initialized with initial_water_m on low ground (<=20th percentile elevation + channel)
+    h = np.zeros((n_runs, N, M), dtype=np.float64)
+    if float(initial_water_m) > 0:
+        z_thresh = float(np.percentile(z, 20))
+        low_mask = (z <= z_thresh) | channel_mask
+        h[:, low_mask] = float(initial_water_m)
 
     breach_times = np.full((n_runs, num_reg), np.nan, dtype=np.float64)
     breached = np.zeros((n_runs, num_reg), dtype=bool)

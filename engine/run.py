@@ -132,8 +132,14 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
     cell_area = dx * dy
 
     # ---- time loop -------------------------------------------------------------------
-    # Initial Water Level: initialized with initial_water_m value across the grid
-    h = np.full((N, M), init_water, dtype=np.float64)
+    # Initial Water Level: applied to low ground (<=20th percentile elevation + channels)
+    h = np.zeros((N, M), dtype=np.float64)
+    if init_water > 0:
+        z_thresh = float(np.percentile(z, 20))
+        ch_mask = np.asarray(city.get("channel_mask", np.zeros_like(z, dtype=bool)), bool)
+        low_mask = (z <= z_thresh) | ch_mask
+        h[low_mask] = init_water
+
     h = np.clip(h, 0.0, None)
     frames = [h.astype(np.float32)]
     rain_in = drained_out = infil_out = 0.0
@@ -277,14 +283,15 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
     affected = (expo * np.asarray(city["pop"], float)).sum(axis=(1, 2))   # [T] people
 
     # Mass Balance Tracking: Maintain running tally of total system water volume: V_total = sum(h * dx * dy)
+    init_water_vol = float(np.sum(frames[0]))
     v_total_m3 = float(np.sum(h) * cell_area)
     v_rain_m3 = float(rain_in * cell_area)
     v_drained_m3 = float(drained_out * cell_area)
     v_infil_m3 = float(infil_out * cell_area)
-    v_init_m3 = float(init_water * z.size * cell_area)
+    v_init_m3 = float(init_water_vol * cell_area)
 
-    mass_err = (init_water * z.size) + rain_in - drained_out - infil_out - float(h.sum())
-    total_inflow = max((init_water * z.size) + rain_in, 1e-12)
+    mass_err = init_water_vol + rain_in - drained_out - infil_out - float(h.sum())
+    total_inflow = max(init_water_vol + rain_in, 1e-12)
     mass_err_rel = float(mass_err / total_inflow)
     ever_crit = (hcube >= h_crit).any(axis=0)
     total_pop = float(np.sum(city["pop"]))
@@ -444,6 +451,18 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
     else:
         regional_zones = {}
         timeline = []
+        first_ward_crit_min = None
+
+    # Calculate first_ward_critical_min if regional tracking active
+    if region_status is not None and (reg_status_list == 2).any():
+        earliest_frame = int(np.where((reg_status_list == 2).any(axis=1))[0][0])
+        first_ward_crit_min = float(earliest_frame * mpf)
+    else:
+        first_ward_crit_min = None
+
+    # Median of t_crit across breached cells
+    valid_t_crit = t_crit[~np.isnan(t_crit)]
+    median_t_crit = float(np.median(valid_t_crit)) if len(valid_t_crit) > 0 else None
 
     out = {
         "h": hcube,
@@ -459,6 +478,8 @@ def run_scenario(city, scenario, params=None, intensity_mm_hr=None, duration_hrs
             "peak_depth_m": float(hcube.max()),
             "critical_cells": int(ever_crit.sum()),
             "first_critical_min": float(np.nanmin(t_crit)) if ever_crit.any() else None,
+            "first_ward_critical_min": first_ward_crit_min,
+            "median_t_crit_min": median_t_crit,
             "peak_affected": float(affected.max()),
             "peak_affected_pct": float(100 * affected.max() / total_pop),
             "mass_err": float(mass_err),

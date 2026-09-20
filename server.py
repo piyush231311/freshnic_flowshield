@@ -60,7 +60,7 @@ class SimulationRequest(BaseModel):
         default=0.0,
         ge=0.0,
         le=5.0,
-        description="Initial standing water depth in metres across the city (Range: 0.0 to 5.0m)",
+        description="Initial standing water depth in metres applied to low-elevation zones and drainage channels (Range: 0.0 to 5.0m)",
     )
     drain_failure: bool = Field(
         default=False,
@@ -237,9 +237,9 @@ def simulate(req: SimulationRequest):
         initial_water_m=req.initial_water_m,
     )
 
-    # Compute baseline scenario for frontend delta comparisons (35 mm/hr, 0 initial water, no disruptions)
+    # Compute baseline scenario for frontend delta comparisons (10 mm/hr, 0 initial water, no disruptions)
     baseline_sc = build_scenario(
-        35.0,
+        10.0,
         req.duration_hrs,
         0.0,
         False,
@@ -249,19 +249,23 @@ def simulate(req: SimulationRequest):
     baseline_res = run_scenario(
         city,
         baseline_sc,
-        intensity_mm_hr=35.0,
+        intensity_mm_hr=10.0,
         duration_hrs=req.duration_hrs,
         initial_water_m=0.0,
     )
 
     # Sanitize float values in summary
     summary = dict(result["summary"])
-    if summary.get("first_critical_min") is not None and (np.isnan(summary["first_critical_min"]) or np.isinf(summary["first_critical_min"])):
-        summary["first_critical_min"] = None
+    for field in ("first_critical_min", "first_ward_critical_min", "median_t_crit_min"):
+        val = summary.get(field)
+        if val is not None and (np.isnan(val) or np.isinf(val)):
+            summary[field] = None
 
     base_summary = dict(baseline_res["summary"])
-    if base_summary.get("first_critical_min") is not None and (np.isnan(base_summary["first_critical_min"]) or np.isinf(base_summary["first_critical_min"])):
-        base_summary["first_critical_min"] = None
+    for field in ("first_critical_min", "first_ward_critical_min", "median_t_crit_min"):
+        val = base_summary.get(field)
+        if val is not None and (np.isnan(val) or np.isinf(val)):
+            base_summary[field] = None
 
     # Global 2D t_crit matrix with None for unbreached cells
     t_crit_arr = result["t_crit"]
@@ -278,6 +282,8 @@ def simulate(req: SimulationRequest):
         "status": result["status"].tolist(),
         "t_crit": t_crit_clean,
         "first_critical_min": summary.get("first_critical_min"),
+        "first_ward_critical_min": summary.get("first_ward_critical_min"),
+        "median_t_crit_min": summary.get("median_t_crit_min"),
         "summary": summary,
         "zones": summary.get("zones", {}),
         "baseline_summary": base_summary,
@@ -388,56 +394,51 @@ STRESS_SCENARIO_CONFIGS = [
         "id": "normal_baseline",
         "title": "Normal Rainfall",
         "subtitle": "Baseline Standard Drainage",
-        "intensity_mm_hr": 35.0,
-        "duration_hrs": 4.0,
+        "intensity_mm_hr": 10.0,
+        "duration_hrs": 3.0,
         "initial_water_m": 0.0,
         "drain_failure": False,
         "blockage": False,
-        "description": "Standard precipitation envelope under full storm-drain capacity. Natural river channels handle total runoff with no structural inundation.",
     },
     {
         "id": "moderate_blocked",
         "title": "Moderate Monsoon",
         "subtitle": "Central Canal Blockage (+30m)",
-        "intensity_mm_hr": 45.0,
+        "intensity_mm_hr": 30.0,
         "duration_hrs": 4.0,
         "initial_water_m": 0.0,
         "drain_failure": False,
         "blockage": True,
-        "description": "Moderate rain combined with a 100% culvert obstruction at t=30m. Backwater buildup inundates low-lying eastern arterial zones.",
     },
     {
         "id": "heavy_drain_failure",
         "title": "Heavy Monsoon",
         "subtitle": "Urban Core Drain Failure (+60m)",
-        "intensity_mm_hr": 75.0,
-        "duration_hrs": 6.0,
-        "initial_water_m": 0.2,
+        "intensity_mm_hr": 30.0,
+        "duration_hrs": 4.0,
+        "initial_water_m": 0.0,
         "drain_failure": True,
         "blockage": False,
-        "description": "Intense sustained monsoon paired with a 60% loss of pumping capacity in the central business district. Commercial core breaches critical threshold.",
     },
     {
         "id": "extreme_flashburst",
         "title": "Extreme Flashburst",
         "subtitle": "High-Intensity Cloudburst",
-        "intensity_mm_hr": 120.0,
+        "intensity_mm_hr": 60.0,
         "duration_hrs": 4.0,
-        "initial_water_m": 0.3,
+        "initial_water_m": 0.0,
         "drain_failure": False,
         "blockage": False,
-        "description": "Severe 100-year convective cloudburst. Natural channels overflow and inundate vulnerable lowlands.",
     },
     {
         "id": "extreme_compound",
         "title": "Compound Catastrophe",
         "subtitle": "Compound Failure (Block + Drain Failure + Standing Water)",
-        "intensity_mm_hr": 150.0,
-        "duration_hrs": 6.0,
-        "initial_water_m": 0.5,
+        "intensity_mm_hr": 60.0,
+        "duration_hrs": 4.0,
+        "initial_water_m": 0.15,
         "drain_failure": True,
         "blockage": True,
-        "description": "100-year convective cloudburst combined with simultaneous drain and canal failures over pre-existing standing water.",
     },
 ]
 
@@ -533,6 +534,41 @@ def get_stress_matrix():
             risk_color = "text-emerald-400 border-emerald-500/50 bg-emerald-500/10"
             badge_bg = "bg-emerald-500"
 
+        # Dynamically generate narrative description based on computed hydrodynamic results
+        cid = cfg["id"]
+        if cid == "normal_baseline":
+            narrative = (
+                f"Controlled baseline under {cfg['intensity_mm_hr']:.0f} mm/hr rain ({cfg['duration_hrs']:.0f}h). "
+                f"Peak depth {p_depth:.2f}m with {int(p_pop):,} affected citizens across {c_wards} critical wards; "
+                f"storm drainage network operates within designed capacity."
+            )
+        elif cid == "moderate_blocked":
+            narrative = (
+                f"Moderate storm ({cfg['intensity_mm_hr']:.0f} mm/hr) with 100% canal culvert blockage at t=30m. "
+                f"Upstream backwater reaches {p_depth:.2f}m peak depth, impacting {int(p_pop):,} residents "
+                f"across {c_wards} critical wards."
+            )
+        elif cid == "heavy_drain_failure":
+            narrative = (
+                f"Monsoon storm ({cfg['intensity_mm_hr']:.0f} mm/hr) paired with 60% urban core storm-drain capacity loss at t=60m. "
+                f"Water accumulates to {p_depth:.2f}m affecting {int(p_pop):,} citizens across {c_wards} critical wards."
+            )
+        elif cid == "extreme_flashburst":
+            narrative = (
+                f"Severe {cfg['intensity_mm_hr']:.0f} mm/hr cloudburst inundates natural channels. "
+                f"Water depth peaks at {p_depth:.2f}m, impacting {int(p_pop):,} residents with {c_wards} wards breaching critical thresholds."
+            )
+        elif cid == "extreme_compound":
+            narrative = (
+                f"Catastrophic compound event ({cfg['intensity_mm_hr']:.0f} mm/hr + {cfg['initial_water_m']:.2f}m initial water) "
+                f"with simultaneous canal blockage and drain failure. Peak depth reaches {p_depth:.2f}m, impacting {int(p_pop):,} citizens across {c_wards} wards."
+            )
+        else:
+            narrative = (
+                f"Simulation of {cfg['intensity_mm_hr']:.0f} mm/hr rain over {cfg['duration_hrs']:.1f}h. "
+                f"Resulting peak depth is {p_depth:.2f}m with {int(p_pop):,} affected residents across {c_wards} critical wards."
+            )
+
         scenarios_output.append({
             "id": cfg["id"],
             "title": cfg["title"],
@@ -557,7 +593,7 @@ def get_stress_matrix():
             "badgeBg": badge_bg,
             "deltaDepth": delta_depth_str,
             "deltaPop": delta_pop_str,
-            "description": cfg["description"],
+            "description": narrative,
         })
 
     _STRESS_MATRIX_CACHE = scenarios_output
