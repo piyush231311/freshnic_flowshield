@@ -750,13 +750,10 @@ function TacticalNodeNetwork({
               const wardImpact = simData?.impact?.per_ward?.find((w) => w.id === node.id);
               const isWorsened = Boolean(wardImpact?.worsened);
 
-              // Task 1: Check if ward has active soil infiltration occurring
-              const stormIntensity = Number(
-                simData?.rain_mmhr?.[Math.max(0, Math.min(currentStep, (simData?.rain_mmhr?.length || 1) - 1))] ??
-                useSimulationStore.getState().intensity ??
-                0
-              );
-              const isAbsorbing = ((node.depth || 0) < 0.01) && (((node.cumulativeAbsorbedM3 || 0) > 0) || stormIntensity > 0);
+              // Safe absorption condition relying entirely on ward telemetry:
+              const isAbsorbing = 
+                (Number(node.depth) === 0 || (Number(node.depth) || 0) < 0.01) && 
+                ((Number(node.cumulative_absorbed_m3 ?? node.cumulativeAbsorbedM3) || 0) > 0 || (Number(node.soil_saturation_pct ?? node.soilSaturationPct) || 0) > 0);
 
               // Accessibility: Descriptive aria-label (e.g. "Ward 11, Critical, canal blocked, drains impaired, worsened by disruption")
               const statusCapitalized = cfg.label.charAt(0).toUpperCase() + cfg.label.slice(1).toLowerCase();
@@ -1078,7 +1075,10 @@ function TacticalNodeNetwork({
                   )}
 
                   {/* Active Soil Infiltration Indicator in Tooltip */}
-                  {Boolean(((node.depth || 0) < 0.01) && (((node.cumulativeAbsorbedM3 || 0) > 0) || stormIntensity > 0)) && (
+                  {Boolean(
+                    (Number(node.depth) === 0 || (Number(node.depth) || 0) < 0.01) && 
+                    ((Number(node.cumulative_absorbed_m3 ?? node.cumulativeAbsorbedM3) || 0) > 0 || (Number(node.soil_saturation_pct ?? node.soilSaturationPct) || 0) > 0)
+                  ) && (
                     <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 font-bold text-[10px] mt-2">
                       <Layers className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                       <span>Active Infiltration: Permeable Soil</span>
